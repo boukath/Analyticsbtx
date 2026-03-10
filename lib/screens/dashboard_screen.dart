@@ -4,12 +4,13 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/people_count.dart';
 import '../services/folder_scanner_service.dart';
 import '../core/data_aggregator.dart';
 
-enum ChartFilter { raw, hourly, daily }
+enum ChartFilter { hourly, daily }
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({Key? key}) : super(key: key);
@@ -27,7 +28,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   ChartFilter _currentFilter = ChartFilter.hourly;
   DateTimeRange? _selectedDateRange;
 
-  // Premium Analytics Variables
+  // NEW MULTI-CAMERA VARIABLES
+  List<String> _availableCameras = ['All Doors'];
+  String _selectedCamera = 'All Doors';
+
   int _totalIn = 0;
   int _totalOut = 0;
   int _occupancy = 0;
@@ -35,40 +39,76 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   final FolderScannerService _scannerService = FolderScannerService();
 
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedFolder();
+  }
+
+  Future<void> _loadSavedFolder() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedPath = prefs.getString('saved_data_folder');
+
+    if (savedPath != null && savedPath.isNotEmpty) {
+      _processDataFromPath(savedPath);
+    }
+  }
+
   Future<void> _pickFolderAndLoadData() async {
     String? folderPath = await FilePicker.platform.getDirectoryPath();
 
     if (folderPath != null) {
-      setState(() {
-        _isLoading = true;
-        _selectedFolderPath = folderPath;
-        _selectedDateRange = null;
-      });
-
-      List<PeopleCount> loadedData = await _scannerService.loadScbDataFromFolder(folderPath);
-
-      setState(() {
-        _rawData = loadedData;
-        if (_rawData.isNotEmpty) {
-          var lastDateParts = _rawData.last.date.split('/');
-          if (lastDateParts.length == 3) {
-            DateTime latestDate = DateTime(
-                int.parse(lastDateParts[2]),
-                int.parse(lastDateParts[1]),
-                int.parse(lastDateParts[0])
-            );
-            _selectedDateRange = DateTimeRange(start: latestDate, end: latestDate);
-          }
-        }
-        _applyFilter();
-        _isLoading = false;
-      });
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('saved_data_folder', folderPath);
+      _processDataFromPath(folderPath);
     }
+  }
+
+  Future<void> _processDataFromPath(String folderPath) async {
+    setState(() {
+      _isLoading = true;
+      _selectedFolderPath = folderPath;
+      _selectedDateRange = null;
+    });
+
+    List<PeopleCount> loadedData = await _scannerService.loadScbDataFromFolder(folderPath);
+
+    setState(() {
+      _rawData = loadedData;
+
+      if (_rawData.isNotEmpty) {
+        // 1. Auto-select the most recent date
+        var lastDateParts = _rawData.last.date.split('/');
+        if (lastDateParts.length == 3) {
+          DateTime latestDate = DateTime(
+              int.parse(lastDateParts[2]),
+              int.parse(lastDateParts[1]),
+              int.parse(lastDateParts[0])
+          );
+          _selectedDateRange = DateTimeRange(start: latestDate, end: latestDate);
+        }
+
+        // 2. NEW: Detect all unique cameras/doors in the data!
+        Set<String> uniqueIds = _rawData.map((e) => e.shopId).toSet();
+        List<String> sortedIds = uniqueIds.toList()..sort();
+        _availableCameras = ['All Doors', ...sortedIds];
+        _selectedCamera = 'All Doors'; // Default to showing everything combined
+      }
+
+      _applyFilter();
+      _isLoading = false;
+    });
   }
 
   void _applyFilter() {
     setState(() {
       List<PeopleCount> filteredData = _rawData.where((item) {
+        // NEW: Filter out data if a specific door is selected
+        if (_selectedCamera != 'All Doors' && item.shopId != _selectedCamera) {
+          return false;
+        }
+
+        // Date Filter
         if (_selectedDateRange == null) return true;
         var dateParts = item.date.split('/');
         if (dateParts.length != 3) return true;
@@ -84,13 +124,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
       if (_currentFilter == ChartFilter.daily) {
         _displayedData = DataAggregator.aggregateByDay(filteredData);
-      } else if (_currentFilter == ChartFilter.hourly) {
-        _displayedData = DataAggregator.aggregateByHour(filteredData);
       } else {
-        _displayedData = List.from(filteredData);
+        _displayedData = DataAggregator.aggregateByHour(filteredData);
       }
 
-      // Calculate Advanced Analytics
       _totalIn = 0;
       _totalOut = 0;
       int maxTraffic = 0;
@@ -108,7 +145,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       }
 
       _occupancy = _totalIn - _totalOut;
-      if (_occupancy < 0) _occupancy = 0; // Prevent negative occupancy
+      if (_occupancy < 0) _occupancy = 0;
     });
   }
 
@@ -174,10 +211,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final isDesktop = MediaQuery.of(context).size.width > 800;
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0B0F19), // Deep Executive Slate
+      backgroundColor: const Color(0xFF0B0F19),
       body: Stack(
         children: [
-          // Premium Glow Effects in Background
           Positioned(top: -100, left: -100, child: _buildGlowOrb(Colors.cyanAccent.withOpacity(0.15), 300)),
           Positioned(bottom: -100, right: -100, child: _buildGlowOrb(Colors.pinkAccent.withOpacity(0.15), 400)),
 
@@ -211,10 +247,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _buildGlowOrb(Color color, double size) {
     return Container(
       width: size, height: size,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: color,
-      ),
+      decoration: BoxDecoration(shape: BoxShape.circle, color: color),
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 100, sigmaY: 100),
         child: Container(color: Colors.transparent),
@@ -229,15 +262,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'RETAIL INTELLIGENCE',
-              style: TextStyle(fontSize: 12, color: Colors.cyanAccent, fontWeight: FontWeight.bold, letterSpacing: 2),
-            ),
+            const Text('RETAIL INTELLIGENCE', style: TextStyle(fontSize: 12, color: Colors.cyanAccent, fontWeight: FontWeight.bold, letterSpacing: 2)),
             const SizedBox(height: 4),
-            const Text(
-              'Traffic Analytics',
-              style: TextStyle(fontSize: 36, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: -1),
-            ),
+            const Text('Traffic Analytics', style: TextStyle(fontSize: 36, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: -1)),
             if (_selectedFolderPath != null)
               Padding(
                 padding: const EdgeInsets.only(top: 8.0),
@@ -306,7 +333,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(title, style: TextStyle(fontSize: 12, color: Colors.white54, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
+              Text(title, style: const TextStyle(fontSize: 12, color: Colors.white54, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
               Icon(icon, color: color, size: 20),
             ],
           ),
@@ -323,11 +350,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Premium Date Navigation & View Toggles
           Wrap(
             alignment: WrapAlignment.spaceBetween,
             crossAxisAlignment: WrapCrossAlignment.center,
+            runSpacing: 16,
             children: [
+              // LEFT SIDE: The Date Scroller
               Container(
                 decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), borderRadius: BorderRadius.circular(12)),
                 padding: const EdgeInsets.all(4),
@@ -346,26 +374,66 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ],
                 ),
               ),
-              DropdownButtonHideUnderline(
-                child: DropdownButton<ChartFilter>(
-                  value: _currentFilter,
-                  dropdownColor: const Color(0xFF1E293B),
-                  icon: const Icon(Icons.timeline, color: Colors.white54),
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                  items: const [
-                    // REMOVED the 15-min raw view! Now it only shows Hourly and Daily.
-                    DropdownMenuItem(value: ChartFilter.hourly, child: Text(' Hourly Timeline')),
-                    DropdownMenuItem(value: ChartFilter.daily, child: Text(' Daily Timeline')),
-                  ],
-                  onChanged: (ChartFilter? newValue) {
-                    if (newValue != null) {
-                      setState(() {
-                        _currentFilter = newValue;
-                        _applyFilter();
-                      });
-                    }
-                  },
-                ),
+
+              // RIGHT SIDE: The Camera Selector and Timeline Filter
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // NEW: The Camera Selector Dropdown!
+                  if (_availableCameras.length > 1) // Only show if we actually found multiple cameras
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      margin: const EdgeInsets.only(right: 16),
+                      decoration: BoxDecoration(color: Colors.cyanAccent.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: _selectedCamera,
+                          dropdownColor: const Color(0xFF1E293B),
+                          icon: const Icon(Icons.camera_alt, color: Colors.cyanAccent, size: 18),
+                          style: const TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold),
+                          items: _availableCameras.map((String camera) {
+                            return DropdownMenuItem<String>(
+                              value: camera,
+                              child: Padding(
+                                padding: const EdgeInsets.only(left: 8.0),
+                                child: Text(camera == 'All Doors' ? 'All Doors' : 'Camera $camera'),
+                              ),
+                            );
+                          }).toList(),
+                          onChanged: (String? newValue) {
+                            if (newValue != null) {
+                              setState(() {
+                                _selectedCamera = newValue;
+                                _applyFilter();
+                              });
+                            }
+                          },
+                        ),
+                      ),
+                    ),
+
+                  // The View Filter Dropdown
+                  DropdownButtonHideUnderline(
+                    child: DropdownButton<ChartFilter>(
+                      value: _currentFilter,
+                      dropdownColor: const Color(0xFF1E293B),
+                      icon: const Icon(Icons.timeline, color: Colors.white54),
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                      items: const [
+                        DropdownMenuItem(value: ChartFilter.hourly, child: Text(' Hourly Timeline')),
+                        DropdownMenuItem(value: ChartFilter.daily, child: Text(' Daily Timeline')),
+                      ],
+                      onChanged: (ChartFilter? newValue) {
+                        if (newValue != null) {
+                          setState(() {
+                            _currentFilter = newValue;
+                            _applyFilter();
+                          });
+                        }
+                      },
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -387,7 +455,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           fontWeight: FontWeight.bold,
                           fontSize: 14,
                         );
-                        // Also show the exact time in the tooltip!
                         String timeText = _displayedData[touchedSpot.x.toInt()].time;
                         String type = touchedSpot.barIndex == 0 ? "In: " : "Out: ";
                         return LineTooltipItem("$timeText\n$type${touchedSpot.y.toInt()}", textStyle);
@@ -403,25 +470,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 titlesData: FlTitlesData(
                   rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
                   topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
-
-                  // UPDATED: Clean X-Axis that perfectly maps to your data's Time
                   bottomTitles: AxisTitles(
                     sideTitles: SideTitles(
                       showTitles: true,
                       reservedSize: 32,
-                      interval: 1, // We evaluate every single point
+                      interval: 1,
                       getTitlesWidget: (value, meta) {
                         int index = value.toInt();
                         if (index >= 0 && index < _displayedData.length) {
-                          // If there are a lot of hours, we skip every other label so they don't crash into each other
                           if (_displayedData.length > 12 && index % 2 != 0) {
                             return const SizedBox.shrink();
                           }
-
                           return Padding(
                             padding: const EdgeInsets.only(top: 10.0),
                             child: Text(
-                              _displayedData[index].time, // Displays '09:00', '10:00', etc.
+                              _displayedData[index].time,
                               style: const TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold),
                             ),
                           );
@@ -430,7 +493,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       },
                     ),
                   ),
-
                   leftTitles: AxisTitles(
                     sideTitles: SideTitles(
                       showTitles: true,
@@ -482,9 +544,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 }
-// ============================================================================
-// REUSABLE COMPONENT: Executive Dark Glass Card
-// ============================================================================
+
 class DarkGlassCard extends StatelessWidget {
   final Widget child;
   final EdgeInsetsGeometry padding;
