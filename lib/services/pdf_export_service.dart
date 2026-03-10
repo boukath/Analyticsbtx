@@ -16,6 +16,7 @@ class PdfExportService {
     required int totalIn,
     required int totalOut,
     required String peakHour,
+    String? customFileName, // NEW: Allows passing a nice name!
   }) async {
     // 1. Create a new PDF document
     final pdf = pw.Document(
@@ -81,6 +82,9 @@ class PdfExportService {
 
         // --- BODY CONTENT ---
         build: (pw.Context context) {
+          // Calculate the true total visitors
+          int totalVisitors = (totalIn + totalOut) ~/ 2;
+
           return [
             // SUMMARY CARDS ROW
             pw.Row(
@@ -88,7 +92,7 @@ class PdfExportService {
               children: [
                 _buildPdfSummaryCard('TOTAL IN', totalIn.toString(), primaryColor, textLight),
                 _buildPdfSummaryCard('TOTAL OUT', totalOut.toString(), primaryColor, textLight),
-                _buildPdfSummaryCard('NET OCCUPANCY', (totalIn - totalOut > 0 ? totalIn - totalOut : 0).toString(), primaryColor, textLight),
+                _buildPdfSummaryCard('TOTAL VISITORS', totalVisitors.toString(), primaryColor, accentColor),
                 _buildPdfSummaryCard('PEAK HOUR', peakHour, primaryColor, textLight),
               ],
             ),
@@ -106,15 +110,19 @@ class PdfExportService {
               headerStyle: pw.TextStyle(color: textLight, fontWeight: pw.FontWeight.bold, fontSize: 10),
               cellStyle: pw.TextStyle(color: textDark, fontSize: 10),
               rowDecoration: const pw.BoxDecoration(border: pw.Border(bottom: pw.BorderSide(color: PdfColors.grey200, width: 0.5))),
-              headers: ['Date', 'Time', 'Door/Camera', 'Entrances (IN)', 'Exits (OUT)', 'Total Activity'],
+              // UPDATED HEADER: Changed "Total Activity" to "Total Visitors"
+              headers: ['Date', 'Time', 'Door/Camera', 'Entrances (IN)', 'Exits (OUT)', 'Total Visitors'],
               data: data.map((item) {
+                // THE MATH FIX: (IN + OUT) / 2
+                int visitors = (item.inCount + item.outCount) ~/ 2;
+
                 return [
                   item.date,
                   item.time,
                   item.doorName,
                   item.inCount.toString(),
                   item.outCount.toString(),
-                  (item.inCount + item.outCount).toString(),
+                  visitors.toString(), // Passes the corrected number!
                 ];
               }).toList(),
             ),
@@ -124,9 +132,12 @@ class PdfExportService {
     );
 
     // 4. Open the interactive Preview & Save Window
+    // Use the custom name, or fallback to the timestamp
+    String finalFileName = customFileName ?? 'Traffic_Report_${DateTime.now().millisecondsSinceEpoch}.pdf';
+
     await Printing.layoutPdf(
       onLayout: (PdfPageFormat format) async => pdf.save(),
-      name: 'Traffic_Report_${DateTime.now().millisecondsSinceEpoch}.pdf',
+      name: finalFileName,
     );
   }
 
