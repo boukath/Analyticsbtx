@@ -20,6 +20,8 @@ dependencies:
   # Used for selecting the .scb data folder on Windows/Android
   file_picker: ^6.1.1
   shared_preferences: ^2.2.2
+  pdf: ^3.11.0
+  printing: ^5.11.1
 
 dev_dependencies:
   flutter_test:

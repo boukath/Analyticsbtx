@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/people_count.dart';
 import '../services/folder_scanner_service.dart';
 import '../core/data_aggregator.dart';
+import '../services/pdf_export_service.dart'; // NEW: Import the PDF Engine
 
 enum ChartFilter { hourly, daily }
 
@@ -28,7 +29,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   ChartFilter _currentFilter = ChartFilter.hourly;
   DateTimeRange? _selectedDateRange;
 
-  // NEW MULTI-CAMERA VARIABLES
+  // MULTI-CAMERA VARIABLES
   List<String> _availableCameras = ['All Doors'];
   String _selectedCamera = 'All Doors';
 
@@ -77,7 +78,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _rawData = loadedData;
 
       if (_rawData.isNotEmpty) {
-        // 1. Auto-select the most recent date
         var lastDateParts = _rawData.last.date.split('/');
         if (lastDateParts.length == 3) {
           DateTime latestDate = DateTime(
@@ -88,11 +88,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
           _selectedDateRange = DateTimeRange(start: latestDate, end: latestDate);
         }
 
-        // 2. NEW: Detect all unique cameras/doors in the data!
-        Set<String> uniqueIds = _rawData.map((e) => e.shopId).toSet();
+        Set<String> uniqueIds = _rawData.map((e) => e.doorName).toSet();
         List<String> sortedIds = uniqueIds.toList()..sort();
         _availableCameras = ['All Doors', ...sortedIds];
-        _selectedCamera = 'All Doors'; // Default to showing everything combined
+        _selectedCamera = 'All Doors';
       }
 
       _applyFilter();
@@ -103,12 +102,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void _applyFilter() {
     setState(() {
       List<PeopleCount> filteredData = _rawData.where((item) {
-        // NEW: Filter out data if a specific door is selected
-        if (_selectedCamera != 'All Doors' && item.shopId != _selectedCamera) {
+        if (_selectedCamera != 'All Doors' && item.doorName != _selectedCamera) {
           return false;
         }
 
-        // Date Filter
         if (_selectedDateRange == null) return true;
         var dateParts = item.date.split('/');
         if (dateParts.length != 3) return true;
@@ -206,6 +203,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  // NEW: Triggers the PDF Generation!
+  Future<void> _exportToPdf() async {
+    if (_displayedData.isEmpty) return; // Prevent exporting empty data
+
+    String reportType = _currentFilter == ChartFilter.hourly ? "Hourly Timeline" : "Daily Timeline";
+    String cameraLabel = _selectedCamera == 'All Doors' ? 'All Doors' : 'Camera ${_selectedCamera.toUpperCase()}';
+
+    await PdfExportService.generateAndPreviewReport(
+      reportType: reportType,
+      dateRangeText: _getFormattedDateString(),
+      cameraName: cameraLabel,
+      data: _displayedData,
+      totalIn: _totalIn,
+      totalOut: _totalOut,
+      peakHour: _peakHour,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDesktop = MediaQuery.of(context).size.width > 800;
@@ -272,18 +287,43 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
           ],
         ),
-        DarkGlassCard(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-          child: InkWell(
-            onTap: _pickFolderAndLoadData,
-            child: const Row(
-              children: [
-                Icon(Icons.drive_folder_upload, color: Colors.cyanAccent),
-                SizedBox(width: 12),
-                Text('IMPORT DATA', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white, letterSpacing: 1)),
-              ],
+
+        // Buttons Row
+        Row(
+          children: [
+            // NEW: Export Button (Only shows if we have data)
+            if (_rawData.isNotEmpty) ...[
+              DarkGlassCard(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                child: InkWell(
+                  onTap: _exportToPdf,
+                  child: const Row(
+                    children: [
+                      Icon(Icons.picture_as_pdf, color: Colors.pinkAccent),
+                      SizedBox(width: 8),
+                      Text('EXPORT PDF', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white, letterSpacing: 1)),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 16), // Space between buttons
+            ],
+
+            // Existing Import Button
+            DarkGlassCard(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+              child: InkWell(
+                onTap: _pickFolderAndLoadData,
+                child: const Row(
+                  children: [
+                    Icon(Icons.drive_folder_upload, color: Colors.cyanAccent),
+                    SizedBox(width: 12),
+                    Text('IMPORT DATA', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white, letterSpacing: 1)),
+                  ],
+                ),
+              ),
             ),
-          ),
+          ],
         )
       ],
     );
@@ -379,8 +419,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // NEW: The Camera Selector Dropdown!
-                  if (_availableCameras.length > 1) // Only show if we actually found multiple cameras
+                  if (_availableCameras.length > 1)
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       margin: const EdgeInsets.only(right: 16),
@@ -396,7 +435,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               value: camera,
                               child: Padding(
                                 padding: const EdgeInsets.only(left: 8.0),
-                                child: Text(camera == 'All Doors' ? 'All Doors' : 'Camera $camera'),
+                                child: Text(camera == 'All Doors' ? 'All Doors' : camera.toUpperCase()),
                               ),
                             );
                           }).toList(),
