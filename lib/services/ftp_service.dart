@@ -6,7 +6,8 @@ import 'package:flutter/foundation.dart';
 import 'package:ftp_server/ftp_server.dart';
 import 'package:ftp_server/file_operations/physical_file_operations.dart';
 import 'package:ftp_server/server_type.dart'; // NEW: Required for the ServerType setting
-
+import 'b2_cloud_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 class FtpService {
   static FtpServer? _ftpServer;
   static StreamSubscription? _directoryWatcher;
@@ -50,13 +51,28 @@ class FtpService {
       log("👤 Authenticating as user: '$username'");
       log("⏳ Waiting for camera connections...");
 
-      // Start watching the folder so we can log when the camera uploads a file!
-      _directoryWatcher = Directory(rootDirectory).watch().listen((event) {
+      // --- ADD THIS IMPORT AT THE TOP OF ftp_service.dart ---
+      // import 'b2_cloud_service.dart';
+      // import 'package:shared_preferences/shared_preferences.dart';
+
+      // --- REPLACE YOUR EXISTING _directoryWatcher WITH THIS ---
+      _directoryWatcher = Directory(rootDirectory).watch().listen((event) async {
         String fileName = event.path.split(Platform.pathSeparator).last;
-        // Ignore hidden files or temp files if you want
-        if (!fileName.startsWith('.')) {
-          // FIXED: Removed the .name property that was causing the build crash
-          log("📁 File Activity: $fileName");
+
+        // Only react to new .scb files being created/modified
+        if (!fileName.startsWith('.') && fileName.endsWith('.scb')) {
+          log("📁 Camera uploaded: $fileName");
+
+          // 1. Wait 3 seconds to ensure the camera has completely finished writing the file
+          await Future.delayed(const Duration(seconds: 3));
+
+          // 2. Get the current Store Name from preferences
+          final prefs = await SharedPreferences.getInstance();
+          String storeName = prefs.getString('store_name') ?? 'Unknown_Store';
+
+          // 3. Silently push it to Backblaze B2
+          log("☁️ Syncing $fileName to B2 Cloud...");
+          await B2CloudService.uploadScbFile(File(event.path), storeName);
         }
       });
 

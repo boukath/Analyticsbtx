@@ -3,11 +3,12 @@
 import 'dart:ui';
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
+import 'cloud_sync_screen.dart';
 import '../services/ftp_service.dart';
 import 'ftp_server_screen.dart';
 import '../models/people_count.dart';
@@ -35,7 +36,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   DateTimeRange? _selectedDateRange;
 
   Timer? _autoRefreshTimer;
-
   String _localIp = "";
   bool _isFtpRunning = false;
 
@@ -52,11 +52,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
   int _currentClients = 0;
   int _currentArticles = 0;
 
+  String _storeName = "My Store";
+  String _storeLocation = "MAIN BRANCH";
+  String? _storeLogoPath;
+
+  // --- CAMPAIGN MATRIX VARIABLES ---
+  bool _isCompareMode = false;
+  List<PeopleCount> _compareDisplayedData = [];
+  int _compareTotalIn = 0;
+  int _compareTotalOut = 0;
+  int _compareTotalVisitors = 0;
+  double _compareCa = 0;
+  int _compareClients = 0;
+  int _compareArticles = 0;
+
   final FolderScannerService _scannerService = FolderScannerService();
 
   @override
   void initState() {
     super.initState();
+    _loadStoreProfile();
     _loadPosDatabase();
     _loadSavedFolder();
     _checkFtpStatus();
@@ -67,6 +82,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _autoRefreshTimer?.cancel();
     FtpService.stopServer();
     super.dispose();
+  }
+
+  Future<void> _loadStoreProfile() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _storeName = prefs.getString('store_name') ?? "My Store";
+      _storeLocation = prefs.getString('store_location') ?? "MAIN BRANCH";
+      _storeLogoPath = prefs.getString('store_logo_path');
+    });
   }
 
   Future<void> _checkFtpStatus() async {
@@ -82,10 +106,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> _loadSavedFolder() async {
     final prefs = await SharedPreferences.getInstance();
     final savedPath = prefs.getString('saved_data_folder');
-
-    if (savedPath != null && savedPath.isNotEmpty) {
-      _processDataFromPath(savedPath);
-    }
+    if (savedPath != null && savedPath.isNotEmpty) _processDataFromPath(savedPath);
   }
 
   Future<void> _loadPosDatabase() async {
@@ -93,31 +114,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final String? posJson = prefs.getString('pos_database');
     if (posJson != null) {
       setState(() {
-        _posDatabase = Map<String, Map<String, dynamic>>.from(jsonDecode(posJson)).map(
-                (k, v) => MapEntry(k, Map<String, num>.from(v))
-        );
+        _posDatabase = Map<String, Map<String, dynamic>>.from(jsonDecode(posJson)).map((k, v) => MapEntry(k, Map<String, num>.from(v)));
       });
     }
   }
 
   Future<void> _savePosData(String date, double ca, int clients, int articles) async {
-    setState(() {
-      _posDatabase[date] = {"ca": ca, "clients": clients, "articles": articles};
-    });
+    setState(() => _posDatabase[date] = {"ca": ca, "clients": clients, "articles": articles});
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('pos_database', jsonEncode(_posDatabase));
     _calculatePosMetrics();
   }
 
   void _calculatePosMetrics() {
-    _currentCa = 0;
-    _currentClients = 0;
-    _currentArticles = 0;
+    _currentCa = 0; _currentClients = 0; _currentArticles = 0;
+    _compareCa = 0; _compareClients = 0; _compareArticles = 0;
 
     if (_selectedDateRange != null) {
       DateTime start = _selectedDateRange!.start;
       DateTime end = _selectedDateRange!.end;
-
       for (DateTime d = start; d.isBefore(end.add(const Duration(days: 1))); d = d.add(const Duration(days: 1))) {
         String dateStr = _formatDateOnly(d);
         if (_posDatabase.containsKey(dateStr)) {
@@ -126,12 +141,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
           _currentArticles += (_posDatabase[dateStr]!['articles'] ?? 0).toInt();
         }
       }
+
+      // POS Metrics for Previous Period
+      if (_isCompareMode) {
+        Duration duration = end.difference(start);
+        DateTime compareEnd = start.subtract(const Duration(days: 1));
+        DateTime compareStart = compareEnd.subtract(duration);
+        for (DateTime d = compareStart; d.isBefore(compareEnd.add(const Duration(days: 1))); d = d.add(const Duration(days: 1))) {
+          String dateStr = _formatDateOnly(d);
+          if (_posDatabase.containsKey(dateStr)) {
+            _compareCa += _posDatabase[dateStr]!['ca'] ?? 0;
+            _compareClients += (_posDatabase[dateStr]!['clients'] ?? 0).toInt();
+            _compareArticles += (_posDatabase[dateStr]!['articles'] ?? 0).toInt();
+          }
+        }
+      }
     }
   }
 
   Future<void> _pickFolderAndLoadData() async {
     String? folderPath = await FilePicker.platform.getDirectoryPath();
-
     if (folderPath != null) {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('saved_data_folder', folderPath);
@@ -140,58 +169,35 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _processDataFromPath(String folderPath) async {
-    setState(() {
-      _isLoading = true;
-      _selectedFolderPath = folderPath;
-      _selectedDateRange = null;
-    });
-
+    setState(() { _isLoading = true; _selectedFolderPath = folderPath; _selectedDateRange = null; });
     List<PeopleCount> loadedData = await _scannerService.loadScbDataFromFolder(folderPath);
-
     setState(() {
       _rawData = loadedData;
-
       if (_rawData.isNotEmpty) {
         DateTime maxDate = DateTime(2000);
         for (var item in _rawData) {
           var dateParts = item.date.split('/');
           if (dateParts.length == 3) {
-            DateTime rowDate = DateTime(
-                int.parse(dateParts[2]),
-                int.parse(dateParts[1]),
-                int.parse(dateParts[0])
-            );
-            if (rowDate.isAfter(maxDate)) {
-              maxDate = rowDate;
-            }
+            DateTime rowDate = DateTime(int.parse(dateParts[2]), int.parse(dateParts[1]), int.parse(dateParts[0]));
+            if (rowDate.isAfter(maxDate)) maxDate = rowDate;
           }
         }
-
-        if (maxDate.year == 2000) {
-          DateTime now = DateTime.now();
-          maxDate = DateTime(now.year, now.month, now.day);
-        }
-
+        if (maxDate.year == 2000) { DateTime now = DateTime.now(); maxDate = DateTime(now.year, now.month, now.day); }
         _selectedDateRange = DateTimeRange(start: maxDate, end: maxDate);
-
         Set<String> uniqueIds = _rawData.map((e) => e.doorName).toSet();
         List<String> sortedIds = uniqueIds.toList()..sort();
         _availableCameras = ['All Doors', ...sortedIds];
         _selectedCamera = 'All Doors';
       }
-
       _applyFilter();
       _isLoading = false;
     });
-
     _startAutoRefresh();
   }
 
   void _startAutoRefresh() {
     _autoRefreshTimer?.cancel();
-    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 60), (timer) {
-      _refreshDataSilently();
-    });
+    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 60), (timer) => _refreshDataSilently());
   }
 
   Future<void> _refreshDataSilently() async {
@@ -203,9 +209,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         if (_rawData.isNotEmpty) {
           Set<String> uniqueIds = _rawData.map((e) => e.doorName).toSet();
           List<String> sortedIds = uniqueIds.toList()..sort();
-          if (sortedIds.length != (_availableCameras.length - 1)) {
-            _availableCameras = ['All Doors', ...sortedIds];
-          }
+          if (sortedIds.length != (_availableCameras.length - 1)) _availableCameras = ['All Doors', ...sortedIds];
         }
         _applyFilter();
       });
@@ -214,49 +218,53 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   void _applyFilter() {
     setState(() {
+      // 1. Current Period Filter
       List<PeopleCount> filteredData = _rawData.where((item) {
-        if (_selectedCamera != 'All Doors' && item.doorName != _selectedCamera) {
-          return false;
-        }
-
+        if (_selectedCamera != 'All Doors' && item.doorName != _selectedCamera) return false;
         if (_selectedDateRange == null) return true;
         var dateParts = item.date.split('/');
         if (dateParts.length != 3) return true;
-
-        int day = int.parse(dateParts[0]);
-        int month = int.parse(dateParts[1]);
-        int year = int.parse(dateParts[2]);
+        int day = int.parse(dateParts[0]), month = int.parse(dateParts[1]), year = int.parse(dateParts[2]);
         DateTime rowDate = DateTime(year, month, day);
-
-        return rowDate.isAfter(_selectedDateRange!.start.subtract(const Duration(days: 1))) &&
-            rowDate.isBefore(_selectedDateRange!.end.add(const Duration(days: 1)));
+        return rowDate.isAfter(_selectedDateRange!.start.subtract(const Duration(days: 1))) && rowDate.isBefore(_selectedDateRange!.end.add(const Duration(days: 1)));
       }).toList();
 
-      if (_currentFilter == ChartFilter.daily) {
-        _displayedData = DataAggregator.aggregateByDay(filteredData);
-      } else {
-        _displayedData = DataAggregator.aggregateByHour(filteredData);
-      }
+      if (_currentFilter == ChartFilter.daily) _displayedData = DataAggregator.aggregateByDay(filteredData);
+      else _displayedData = DataAggregator.aggregateByHour(filteredData);
 
-      _totalIn = 0;
-      _totalOut = 0;
-      int maxTraffic = 0;
-      _peakHour = "--:--";
-
+      _totalIn = 0; _totalOut = 0; int maxTraffic = 0; _peakHour = "--:--";
       for (var item in _displayedData) {
-        _totalIn += item.inCount;
-        _totalOut += item.outCount;
-
+        _totalIn += item.inCount; _totalOut += item.outCount;
         int totalVisitorsForHour = (item.inCount + item.outCount) ~/ 2;
-
-        if (totalVisitorsForHour > maxTraffic) {
-          maxTraffic = totalVisitorsForHour;
-          _peakHour = item.time;
-        }
+        if (totalVisitorsForHour > maxTraffic) { maxTraffic = totalVisitorsForHour; _peakHour = item.time; }
       }
-
       _occupancy = _totalIn - _totalOut;
       if (_occupancy < 0) _occupancy = 0;
+
+      // 2. Previous Period Filter (For Comparison)
+      if (_isCompareMode && _selectedDateRange != null) {
+        Duration duration = _selectedDateRange!.end.difference(_selectedDateRange!.start);
+        DateTime compareEnd = _selectedDateRange!.start.subtract(const Duration(days: 1));
+        DateTime compareStart = compareEnd.subtract(duration);
+
+        List<PeopleCount> compareFilteredData = _rawData.where((item) {
+          if (_selectedCamera != 'All Doors' && item.doorName != _selectedCamera) return false;
+          var dateParts = item.date.split('/');
+          if (dateParts.length != 3) return true;
+          int day = int.parse(dateParts[0]), month = int.parse(dateParts[1]), year = int.parse(dateParts[2]);
+          DateTime rowDate = DateTime(year, month, day);
+          return rowDate.isAfter(compareStart.subtract(const Duration(days: 1))) && rowDate.isBefore(compareEnd.add(const Duration(days: 1)));
+        }).toList();
+
+        if (_currentFilter == ChartFilter.daily) _compareDisplayedData = DataAggregator.aggregateByDay(compareFilteredData);
+        else _compareDisplayedData = DataAggregator.aggregateByHour(compareFilteredData);
+
+        _compareTotalIn = 0; _compareTotalOut = 0;
+        for (var item in _compareDisplayedData) {
+          _compareTotalIn += item.inCount; _compareTotalOut += item.outCount;
+        }
+        _compareTotalVisitors = (_compareTotalIn + _compareTotalOut) ~/ 2;
+      }
 
       _calculatePosMetrics();
     });
@@ -264,44 +272,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> _pickDateRange() async {
     DateTimeRange? pickedRange = await showDateRangePicker(
-      context: context,
-      firstDate: DateTime(2020),
-      lastDate: DateTime.now().add(const Duration(days: 3650)),
-      initialDateRange: _selectedDateRange,
-      builder: (context, child) {
-        return Theme(
-          data: ThemeData.light().copyWith(
-            colorScheme: ColorScheme.light(
-                primary: Colors.blue[700]!,
-                onPrimary: Colors.white,
-                surface: Colors.white,
-                onSurface: Colors.black87
-            ),
-          ),
-          child: child!,
-        );
-      },
+      context: context, firstDate: DateTime(2020), lastDate: DateTime.now().add(const Duration(days: 3650)), initialDateRange: _selectedDateRange,
+      builder: (context, child) => Theme(data: ThemeData.light().copyWith(colorScheme: ColorScheme.light(primary: Colors.blue[700]!, onPrimary: Colors.white, surface: Colors.white)), child: child!),
     );
-
-    if (pickedRange != null) {
-      setState(() {
-        _selectedDateRange = pickedRange;
-        _applyFilter();
-      });
-    }
+    if (pickedRange != null) { setState(() { _selectedDateRange = pickedRange; _applyFilter(); }); }
   }
 
   void _shiftDate(int days) {
     setState(() {
-      if (_selectedDateRange == null) {
-        DateTime today = DateTime.now();
-        _selectedDateRange = DateTimeRange(start: today, end: today);
-      } else {
-        _selectedDateRange = DateTimeRange(
-          start: _selectedDateRange!.start.add(Duration(days: days)),
-          end: _selectedDateRange!.end.add(Duration(days: days)),
-        );
-      }
+      if (_selectedDateRange == null) { DateTime today = DateTime.now(); _selectedDateRange = DateTimeRange(start: today, end: today); }
+      else { _selectedDateRange = DateTimeRange(start: _selectedDateRange!.start.add(Duration(days: days)), end: _selectedDateRange!.end.add(Duration(days: days))); }
       _applyFilter();
     });
   }
@@ -309,271 +289,122 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String _getFormattedDateString() {
     if (_selectedDateRange == null) return "All Time";
     const List<String> months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    DateTime start = _selectedDateRange!.start;
-    DateTime end = _selectedDateRange!.end;
-
-    if (start.isAtSameMomentAs(end) || end.difference(start).inDays == 0) {
-      return "${months[start.month - 1]} ${start.day}, ${start.year}";
-    } else {
-      return "${months[start.month - 1]} ${start.day} - ${months[end.month - 1]} ${end.day}";
-    }
+    DateTime start = _selectedDateRange!.start, end = _selectedDateRange!.end;
+    if (start.isAtSameMomentAs(end) || end.difference(start).inDays == 0) return "${months[start.month - 1]} ${start.day}, ${start.year}";
+    return "${months[start.month - 1]} ${start.day} - ${months[end.month - 1]} ${end.day}";
   }
 
-  String _formatDateOnly(DateTime d) {
-    return "${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
+  String _formatDateOnly(DateTime d) => "${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
+
+  // --- TREND CALCULATOR FOR BADGES ---
+  Widget _buildTrendBadge(num current, num previous) {
+    if (!_isCompareMode) return const SizedBox.shrink();
+    if (previous == 0) return const SizedBox.shrink();
+
+    double change = ((current - previous) / previous) * 100;
+    bool isPositive = change >= 0;
+
+    return Container(
+        margin: const EdgeInsets.only(top: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+            color: isPositive ? Colors.green.withOpacity(0.1) : Colors.red.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(20)
+        ),
+        child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(isPositive ? Icons.trending_up : Icons.trending_down, size: 14, color: isPositive ? Colors.green[700] : Colors.red[700]),
+              const SizedBox(width: 4),
+              Text('${change.abs().toStringAsFixed(1)}%', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: isPositive ? Colors.green[700] : Colors.red[700])),
+            ]
+        )
+    );
   }
 
-  void _showPosEntryDialog() {
-    if (_selectedDateRange == null) return;
-
-    DateTime targetDate = _selectedDateRange!.end;
-    String dateStr = _formatDateOnly(targetDate);
-
-    TextEditingController caCtrl = TextEditingController(text: (_posDatabase[dateStr]?['ca'] ?? '').toString());
-    TextEditingController clientCtrl = TextEditingController(text: (_posDatabase[dateStr]?['clients'] ?? '').toString());
-    TextEditingController articleCtrl = TextEditingController(text: (_posDatabase[dateStr]?['articles'] ?? '').toString());
+  void _showEditStoreProfileDialog() {
+    TextEditingController nameCtrl = TextEditingController(text: _storeName);
+    TextEditingController locCtrl = TextEditingController(text: _storeLocation);
+    String? tempLogoPath = _storeLogoPath;
 
     showDialog(
         context: context,
         builder: (context) {
-          return AlertDialog(
-            backgroundColor: Colors.white,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            title: Column(
-              children: [
-                Icon(Icons.point_of_sale, color: Colors.orange[600], size: 40),
-                const SizedBox(height: 8),
-                const Text('ENTER DAILY POS DATA', style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 16)),
-                Text('Date: ${_getFormattedDateString()}', style: const TextStyle(color: Colors.black54, fontSize: 12)),
-              ],
-            ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: caCtrl,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.bold),
-                  decoration: InputDecoration(
-                    labelText: 'Chiffre d\'Affaires (Revenue)', labelStyle: const TextStyle(color: Colors.black54),
-                    filled: true, fillColor: Colors.grey[100],
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
-                    prefixIcon: Icon(Icons.attach_money, color: Colors.orange[600]),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: clientCtrl,
-                  keyboardType: TextInputType.number,
-                  style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.bold),
-                  decoration: InputDecoration(
-                    labelText: 'Total Clients (Receipts)', labelStyle: const TextStyle(color: Colors.black54),
-                    filled: true, fillColor: Colors.grey[100],
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
-                    prefixIcon: Icon(Icons.receipt_long, color: Colors.blue[600]),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: articleCtrl,
-                  keyboardType: TextInputType.number,
-                  style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.bold),
-                  decoration: InputDecoration(
-                    labelText: 'Articles Sold', labelStyle: const TextStyle(color: Colors.black54),
-                    filled: true, fillColor: Colors.grey[100],
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
-                    prefixIcon: Icon(Icons.shopping_bag, color: Colors.pink[500]),
-                  ),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('CANCEL', style: TextStyle(color: Colors.black54)),
-              ),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.orange[600], foregroundColor: Colors.white),
-                onPressed: () {
-                  double ca = double.tryParse(caCtrl.text) ?? 0.0;
-                  int clients = int.tryParse(clientCtrl.text) ?? 0;
-                  int articles = int.tryParse(articleCtrl.text) ?? 0;
-
-                  _savePosData(dateStr, ca, clients, articles);
-                  Navigator.pop(context);
-
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('POS Data Saved Successfully!'), backgroundColor: Colors.green));
-                },
-                child: const Text('SAVE DATA', style: TextStyle(fontWeight: FontWeight.bold)),
-              ),
-            ],
-          );
-        }
-    );
-  }
-
-  Future<void> _generateCustomReport(String cam, DateTimeRange range, ChartFilter filter, {required String format}) async {
-    setState(() {
-      _selectedCamera = cam;
-      _selectedDateRange = range;
-      _currentFilter = filter;
-      _applyFilter();
-    });
-
-    await Future.delayed(const Duration(milliseconds: 200));
-
-    if (_displayedData.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No data found for the selected settings.")));
-      return;
-    }
-
-    String reportType = filter == ChartFilter.hourly ? "Hourly Breakdown" : "Daily Summary Breakdown";
-    String cameraLabel = cam == 'All Doors' ? 'Global (All Doors)' : 'Camera ${cam.toUpperCase()}';
-    String safeCam = cam.replaceAll(' ', '_');
-    String safeStart = _formatDateOnly(range.start);
-    String safeEnd = _formatDateOnly(range.end);
-    String baseFileName = "TrafficReport_${safeCam}_${safeStart}_to_$safeEnd";
-    if (safeStart == safeEnd) baseFileName = "TrafficReport_${safeCam}_$safeStart";
-
-    if (format == 'pdf') {
-      await PdfExportService.generateAndPreviewReport(
-        reportType: reportType, dateRangeText: _getFormattedDateString(), cameraName: cameraLabel,
-        data: _displayedData, totalIn: _totalIn, totalOut: _totalOut, peakHour: _peakHour, customFileName: "$baseFileName.pdf",
-      );
-    } else if (format == 'csv') {
-      await CsvExportService.generateAndSaveCsv(
-        reportType: reportType, dateRangeText: _getFormattedDateString(), cameraName: cameraLabel,
-        data: _displayedData, totalIn: _totalIn, totalOut: _totalOut, peakHour: _peakHour, customFileName: "$baseFileName.csv",
-      );
-    }
-  }
-
-  void _showExportMenu() {
-    DateTimeRange exportRange = _selectedDateRange ?? DateTimeRange(start: DateTime.now(), end: DateTime.now());
-    String exportCamera = _selectedCamera;
-    ChartFilter exportFilter = _currentFilter;
-
-    showModalBottomSheet(
-        context: context,
-        isScrollControlled: true,
-        backgroundColor: Colors.white,
-        shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-        builder: (context) {
           return StatefulBuilder(
-              builder: (BuildContext context, StateSetter setModalState) {
-
-                void applyPreset(String type) {
-                  DateTime refDate = exportRange.end;
-                  DateTime start = refDate;
-                  if (type == 'Daily') { start = refDate; exportFilter = ChartFilter.hourly; }
-                  else if (type == 'Weekly') { start = refDate.subtract(const Duration(days: 6)); exportFilter = ChartFilter.daily; }
-                  else if (type == 'Monthly') { start = DateTime(refDate.year, refDate.month - 1, refDate.day); exportFilter = ChartFilter.daily; }
-                  else if (type == 'Yearly') { start = DateTime(refDate.year - 1, refDate.month, refDate.day); exportFilter = ChartFilter.daily; }
-                  setModalState(() => exportRange = DateTimeRange(start: start, end: refDate));
-                }
-
-                return Padding(
-                  padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom, left: 24, right: 24, top: 24),
-                  child: Column(
+              builder: (context, setDialogState) {
+                return AlertDialog(
+                  backgroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  title: const Text('Store Profile Settings', style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold)),
+                  content: Column(
                     mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('EXPORT SETTINGS', style: TextStyle(color: Colors.blue[700], fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
-                      const SizedBox(height: 24),
-                      const Text('1. Quick Date Presets', style: TextStyle(color: Colors.black54, fontSize: 12)),
-                      const SizedBox(height: 8),
-                      SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: Row(
-                          children: ['Daily', 'Weekly', 'Monthly', 'Yearly'].map((preset) => Padding(
-                            padding: const EdgeInsets.only(right: 8.0),
-                            child: OutlinedButton(
-                              style: OutlinedButton.styleFrom(foregroundColor: Colors.black87, side: const BorderSide(color: Colors.black26), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
-                              onPressed: () => applyPreset(preset),
-                              child: Text(preset),
-                            ),
-                          )).toList(),
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      const Text('2. Confirm Date Range', style: TextStyle(color: Colors.black54, fontSize: 12)),
-                      const SizedBox(height: 8),
-                      InkWell(
+                      GestureDetector(
                         onTap: () async {
-                          DateTimeRange? picked = await showDateRangePicker(
-                            context: context, firstDate: DateTime(2020), lastDate: DateTime.now().add(const Duration(days: 3650)), initialDateRange: exportRange,
-                            builder: (context, child) => Theme(
-                                data: ThemeData.light().copyWith(colorScheme: ColorScheme.light(primary: Colors.blue[700]!, onPrimary: Colors.white, surface: Colors.white)),
-                                child: child!
-                            ),
-                          );
-                          if (picked != null) setModalState(() => exportRange = picked);
+                          FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.image);
+                          if (result != null && result.files.single.path != null) {
+                            setDialogState(() => tempLogoPath = result.files.single.path);
+                          }
                         },
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                          decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(8)),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text("${_formatDateOnly(exportRange.start)}   →   ${_formatDateOnly(exportRange.end)}", style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.bold)),
-                              Icon(Icons.edit_calendar, color: Colors.blue[700], size: 20),
-                            ],
+                          width: 80, height: 80,
+                          decoration: BoxDecoration(
+                            color: Colors.grey[200],
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.grey[300]!, width: 2),
+                            image: tempLogoPath != null ? DecorationImage(image: FileImage(File(tempLogoPath!)), fit: BoxFit.cover) : null,
                           ),
+                          child: tempLogoPath == null ? Icon(Icons.add_a_photo, color: Colors.blue[700], size: 30) : null,
                         ),
                       ),
-                      const SizedBox(height: 20),
-                      const Text('3. Target Camera', style: TextStyle(color: Colors.black54, fontSize: 12)),
                       const SizedBox(height: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(8)),
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<String>(
-                            isExpanded: true, value: exportCamera, dropdownColor: Colors.white, style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.bold),
-                            items: _availableCameras.map((String camera) {
-                              return DropdownMenuItem<String>(value: camera, child: Text(camera == 'All Doors' ? '🌍 Global (All Cameras)' : '📹 Camera: ${camera.toUpperCase()}'));
-                            }).toList(),
-                            onChanged: (val) { if (val != null) setModalState(() => exportCamera = val); },
-                          ),
+                      const Text('Tap to change logo', style: TextStyle(color: Colors.black54, fontSize: 12)),
+                      const SizedBox(height: 24),
+
+                      TextField(
+                        controller: nameCtrl,
+                        style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.bold),
+                        decoration: InputDecoration(
+                          labelText: 'Store / Brand Name',
+                          filled: true, fillColor: Colors.grey[100],
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                          prefixIcon: Icon(Icons.storefront, color: Colors.blue[600]),
                         ),
                       ),
-                      const SizedBox(height: 20),
-                      const Text('4. Data Detail Level', style: TextStyle(color: Colors.black54, fontSize: 12)),
-                      Row(
-                        children: [
-                          Expanded(child: RadioListTile<ChartFilter>(title: const Text('Hourly', style: TextStyle(color: Colors.black87, fontSize: 13)), value: ChartFilter.hourly, groupValue: exportFilter, activeColor: Colors.pink[500], contentPadding: EdgeInsets.zero, onChanged: (val) { if (val != null) setModalState(() => exportFilter = val); })),
-                          Expanded(child: RadioListTile<ChartFilter>(title: const Text('Daily', style: TextStyle(color: Colors.black87, fontSize: 13)), value: ChartFilter.daily, groupValue: exportFilter, activeColor: Colors.pink[500], contentPadding: EdgeInsets.zero, onChanged: (val) { if (val != null) setModalState(() => exportFilter = val); })),
-                        ],
+                      const SizedBox(height: 12),
+
+                      TextField(
+                        controller: locCtrl,
+                        style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.bold),
+                        decoration: InputDecoration(
+                          labelText: 'Location (e.g. Branch, City)',
+                          filled: true, fillColor: Colors.grey[100],
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                          prefixIcon: Icon(Icons.location_on, color: Colors.pink[500]),
+                        ),
                       ),
-                      const SizedBox(height: 32),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: SizedBox(
-                              height: 50,
-                              child: ElevatedButton.icon(
-                                style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[600], foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
-                                icon: const Icon(Icons.picture_as_pdf), label: const Text('SAVE PDF', style: TextStyle(fontWeight: FontWeight.bold)),
-                                onPressed: () { Navigator.pop(context); _generateCustomReport(exportCamera, exportRange, exportFilter, format: 'pdf'); },
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: SizedBox(
-                              height: 50,
-                              child: ElevatedButton.icon(
-                                style: ElevatedButton.styleFrom(backgroundColor: Colors.green[600], foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
-                                icon: const Icon(Icons.table_chart), label: const Text('SAVE CSV', style: TextStyle(fontWeight: FontWeight.bold)),
-                                onPressed: () { Navigator.pop(context); _generateCustomReport(exportCamera, exportRange, exportFilter, format: 'csv'); },
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 32),
                     ],
                   ),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(context), child: const Text('CANCEL', style: TextStyle(color: Colors.black54))),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[700], foregroundColor: Colors.white),
+                      onPressed: () async {
+                        final prefs = await SharedPreferences.getInstance();
+                        await prefs.setString('store_name', nameCtrl.text);
+                        await prefs.setString('store_location', locCtrl.text);
+                        if (tempLogoPath != null) await prefs.setString('store_logo_path', tempLogoPath!);
+
+                        setState(() {
+                          _storeName = nameCtrl.text;
+                          _storeLocation = locCtrl.text;
+                          _storeLogoPath = tempLogoPath;
+                        });
+                        Navigator.pop(context);
+                      },
+                      child: const Text('SAVE SETTINGS', style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ],
                 );
               }
           );
@@ -581,38 +412,268 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  void _showPosEntryDialog() {
+    if (_selectedDateRange == null) return;
+    String dateStr = _formatDateOnly(_selectedDateRange!.end);
+    TextEditingController caCtrl = TextEditingController(text: (_posDatabase[dateStr]?['ca'] ?? '').toString());
+    TextEditingController clientCtrl = TextEditingController(text: (_posDatabase[dateStr]?['clients'] ?? '').toString());
+    TextEditingController articleCtrl = TextEditingController(text: (_posDatabase[dateStr]?['articles'] ?? '').toString());
+
+    showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Column(children: [ Icon(Icons.point_of_sale, color: Colors.orange[600], size: 40), const SizedBox(height: 8), const Text('ENTER DAILY POS DATA', style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 16)), Text('Date: ${_getFormattedDateString()}', style: const TextStyle(color: Colors.black54, fontSize: 12)) ]),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(controller: caCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: InputDecoration(labelText: 'Revenue (DZD)', filled: true, fillColor: Colors.grey[100], border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none), prefixIcon: Icon(Icons.payments, color: Colors.orange[600]))),
+              const SizedBox(height: 12),
+              TextField(controller: clientCtrl, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: 'Total Clients', filled: true, fillColor: Colors.grey[100], border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none), prefixIcon: Icon(Icons.receipt_long, color: Colors.blue[600]))),
+              const SizedBox(height: 12),
+              TextField(controller: articleCtrl, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: 'Articles Sold', filled: true, fillColor: Colors.grey[100], border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none), prefixIcon: Icon(Icons.shopping_bag, color: Colors.pink[500]))),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('CANCEL', style: TextStyle(color: Colors.black54))),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.orange[600], foregroundColor: Colors.white),
+              onPressed: () {
+                _savePosData(dateStr, double.tryParse(caCtrl.text) ?? 0.0, int.tryParse(clientCtrl.text) ?? 0, int.tryParse(articleCtrl.text) ?? 0);
+                Navigator.pop(context);
+              },
+              child: const Text('SAVE DATA', style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          ],
+        )
+    );
+  }
+
+  Future<void> _generateCustomReport(String cam, DateTimeRange range, ChartFilter filter, {required String format}) async {
+    setState(() { _selectedCamera = cam; _selectedDateRange = range; _currentFilter = filter; _applyFilter(); });
+    await Future.delayed(const Duration(milliseconds: 200));
+    if (_displayedData.isEmpty) return;
+    String rType = filter == ChartFilter.hourly ? "Hourly Breakdown" : "Daily Summary Breakdown";
+    String cLabel = cam == 'All Doors' ? 'Global (All Doors)' : 'Camera ${cam.toUpperCase()}';
+    String sCam = cam.replaceAll(' ', '_'), sStart = _formatDateOnly(range.start), sEnd = _formatDateOnly(range.end);
+    String fName = sStart == sEnd ? "TrafficReport_${sCam}_$sStart" : "TrafficReport_${sCam}_${sStart}_to_$sEnd";
+
+    if (format == 'pdf') {
+      await PdfExportService.generateAndPreviewReport(reportType: rType, dateRangeText: _getFormattedDateString(), cameraName: cLabel, data: _displayedData, totalIn: _totalIn, totalOut: _totalOut, peakHour: _peakHour, customFileName: "$fName.pdf");
+    } else {
+      await CsvExportService.generateAndSaveCsv(reportType: rType, dateRangeText: _getFormattedDateString(), cameraName: cLabel, data: _displayedData, totalIn: _totalIn, totalOut: _totalOut, peakHour: _peakHour, customFileName: "$fName.csv");
+    }
+  }
+
+  void _showExportMenu() {
+    DateTimeRange eRange = _selectedDateRange ?? DateTimeRange(start: DateTime.now(), end: DateTime.now());
+    String eCam = _selectedCamera; ChartFilter eFilt = _currentFilter;
+
+    showModalBottomSheet(
+        context: context, isScrollControlled: true, backgroundColor: Colors.white, shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+        builder: (context) => StatefulBuilder(
+            builder: (context, setModalState) {
+              void applyPreset(String type) {
+                DateTime ref = eRange.end, start = ref;
+                if (type == 'Daily') { start = ref; eFilt = ChartFilter.hourly; }
+                else if (type == 'Weekly') { start = ref.subtract(const Duration(days: 6)); eFilt = ChartFilter.daily; }
+                else if (type == 'Monthly') { start = DateTime(ref.year, ref.month - 1, ref.day); eFilt = ChartFilter.daily; }
+                setModalState(() => eRange = DateTimeRange(start: start, end: ref));
+              }
+              return Padding(
+                padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom, left: 24, right: 24, top: 24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('EXPORT SETTINGS', style: TextStyle(color: Colors.blue[700], fontSize: 18, fontWeight: FontWeight.bold)), const SizedBox(height: 24),
+                    SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: ['Daily', 'Weekly', 'Monthly'].map((p) => Padding(padding: const EdgeInsets.only(right: 8.0), child: OutlinedButton(onPressed: () => applyPreset(p), child: Text(p)))).toList())), const SizedBox(height: 20),
+                    InkWell(onTap: () async { DateTimeRange? picked = await showDateRangePicker(context: context, firstDate: DateTime(2020), lastDate: DateTime.now().add(const Duration(days: 3650)), initialDateRange: eRange); if (picked != null) setModalState(() => eRange = picked); }, child: Container(padding: const EdgeInsets.all(14), decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(8)), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text("${_formatDateOnly(eRange.start)}   →   ${_formatDateOnly(eRange.end)}", style: const TextStyle(fontWeight: FontWeight.bold)), Icon(Icons.edit_calendar, color: Colors.blue[700])]))), const SizedBox(height: 20),
+                    Row(children: [ Expanded(child: ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[600], foregroundColor: Colors.white), icon: const Icon(Icons.picture_as_pdf), label: const Text('SAVE PDF'), onPressed: () { Navigator.pop(context); _generateCustomReport(eCam, eRange, eFilt, format: 'pdf'); })), const SizedBox(width: 16), Expanded(child: ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: Colors.green[600], foregroundColor: Colors.white), icon: const Icon(Icons.table_chart), label: const Text('SAVE CSV'), onPressed: () { Navigator.pop(context); _generateCustomReport(eCam, eRange, eFilt, format: 'csv'); }))]), const SizedBox(height: 32),
+                  ],
+                ),
+              );
+            }
+        )
+    );
+  }
+
+  // ==========================================
+  // 🎨 4K PREMIUM SAAS UI LAYOUT
+  // ==========================================
+
   @override
   Widget build(BuildContext context) {
     final isDesktop = MediaQuery.of(context).size.width > 800;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC), // Light airy background
-      body: Stack(
+      backgroundColor: const Color(0xFFF3F4F6),
+      body: Row(
         children: [
-          Positioned(top: -100, left: -100, child: _buildGlowOrb(Colors.blue.withOpacity(0.15), 300)),
-          Positioned(bottom: -100, right: -100, child: _buildGlowOrb(Colors.pink.withOpacity(0.15), 400)),
+          // Elegant Dark Sidebar
+          if (isDesktop) _buildSidebar(),
 
-          SafeArea(
-            child: _isLoading
-                ? Center(child: CircularProgressIndicator(color: Colors.blue[700]))
-                : SingleChildScrollView(
-              padding: const EdgeInsets.all(32.0),
+          Expanded(
+            child: Column(
+              children: [
+                _buildTopAppBar(),
+
+                Expanded(
+                  child: _isLoading
+                      ? Center(child: CircularProgressIndicator(color: Colors.blue[700]))
+                      : SingleChildScrollView(
+                    padding: const EdgeInsets.all(32.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _buildPageHeader(),
+                        const SizedBox(height: 32), // Increased spacing for 4K
+
+                        if (_rawData.isEmpty)
+                          _buildEmptyState()
+                        else ...[
+                          _buildTrafficSummaryCards(isDesktop),
+                          const SizedBox(height: 24),
+                          _buildBusinessPerformanceCards(isDesktop),
+                          const SizedBox(height: 32),
+                          _buildInteractiveChartSection(),
+                        ]
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSidebar() {
+    return Container(
+      width: 260,
+      color: const Color(0xFF1E293B), // Elegant Dark Slate Sidebar
+      child: Column(
+        children: [
+          const SizedBox(height: 40),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.analytics, color: Colors.blue[400], size: 32),
+              const SizedBox(width: 12),
+              const Text('Analytics', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: Colors.white)),
+            ],
+          ),
+          const SizedBox(height: 60),
+
+          _buildSidebarItem(Icons.dashboard, 'Dashboard', isActive: true),
+          _buildSidebarItem(Icons.source, 'Data Source', onTap: _pickFolderAndLoadData),
+
+          _buildSidebarItem(Icons.wifi_tethering, 'FTP Server', onTap: () async {
+            await Navigator.push(context, MaterialPageRoute(builder: (context) => const FtpServerScreen()));
+            _checkFtpStatus();
+          }),
+
+          // --- NEW: CLOUD SYNC MENU ITEM ---
+          _buildSidebarItem(Icons.cloud_upload, 'Cloud Sync (B2)', onTap: () {
+            Navigator.push(context, MaterialPageRoute(builder: (context) => const CloudSyncScreen()));
+          }),
+
+          _buildSidebarItem(Icons.point_of_sale, 'POS Entry', onTap: _rawData.isNotEmpty ? _showPosEntryDialog : null),
+          _buildSidebarItem(Icons.download, 'Export Reports', onTap: _rawData.isNotEmpty ? _showExportMenu : null),
+
+          const Spacer(),
+          if (_isFtpRunning)
+            Container(
+              margin: const EdgeInsets.all(24),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(color: Colors.green.withOpacity(0.1), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.green.withOpacity(0.3))),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _buildCustomHeader(),
-                  const SizedBox(height: 40),
+                  Row(children: [Icon(Icons.circle, color: Colors.green[400], size: 12), const SizedBox(width: 8), const Text('FTP Active', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white))]),
+                  const SizedBox(height: 8),
+                  Text('ftp://$_localIp:2121', style: const TextStyle(fontSize: 12, color: Colors.white70)),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 
-                  if (_rawData.isEmpty)
-                    _buildEmptyState()
-                  else ...[
-                    _buildTrafficSummaryCards(isDesktop),
-                    const SizedBox(height: 16),
-                    _buildBusinessPerformanceCards(isDesktop),
+  Widget _buildSidebarItem(IconData icon, String title, {bool isActive = false, VoidCallback? onTap}) {
+    return ListTile(
+      leading: Icon(icon, color: isActive ? Colors.blue[400] : Colors.white54),
+      title: Text(title, style: TextStyle(color: isActive ? Colors.blue[400] : Colors.white54, fontWeight: isActive ? FontWeight.bold : FontWeight.normal, fontSize: 16)),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 8),
+      onTap: onTap,
+    );
+  }
 
-                    const SizedBox(height: 32),
-                    _buildInteractiveChartSection(isDesktop),
-                  ]
+  Widget _buildTopAppBar() {
+    return Container(
+      height: 90,
+      padding: const EdgeInsets.symmetric(horizontal: 32),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border(bottom: BorderSide(color: Colors.grey[200]!)),
+      ),
+      child: Row(
+        children: [
+          StreamBuilder(
+            stream: Stream.periodic(const Duration(seconds: 1)),
+            builder: (context, snapshot) {
+              final now = DateTime.now();
+              const List<String> weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+              const List<String> months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+              String dayName = weekdays[now.weekday - 1];
+              String monthName = months[now.month - 1];
+              String hour = now.hour.toString().padLeft(2, '0');
+              String minute = now.minute.toString().padLeft(2, '0');
+              String second = now.second.toString().padLeft(2, '0');
+
+              return Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text("$dayName, $monthName ${now.day}, ${now.year}", style: const TextStyle(color: Colors.black54, fontSize: 14, fontWeight: FontWeight.w600, letterSpacing: 0.5)),
+                  const SizedBox(height: 2),
+                  Text("$hour:$minute:$second", style: const TextStyle(color: Colors.black87, fontSize: 24, fontWeight: FontWeight.w900, letterSpacing: 1)),
+                ],
+              );
+            },
+          ),
+
+          const Spacer(),
+
+          InkWell(
+            onTap: _showEditStoreProfileDialog,
+            borderRadius: BorderRadius.circular(8),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: Row(
+                children: [
+                  Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(_storeLocation.toUpperCase(), style: const TextStyle(color: Colors.black45, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
+                      Text(_storeName, style: const TextStyle(color: Colors.black87, fontSize: 20, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                  const SizedBox(width: 20),
+                  Container(
+                    width: 70, height: 70,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[100],
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.grey[300]!, width: 2),
+                      image: _storeLogoPath != null ? DecorationImage(image: FileImage(File(_storeLogoPath!)), fit: BoxFit.cover) : null,
+                    ),
+                    child: _storeLogoPath == null ? Icon(Icons.storefront, color: Colors.blue[700], size: 36) : null,
+                  ),
                 ],
               ),
             ),
@@ -622,44 +683,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildGlowOrb(Color color, double size) {
-    return Container(
-      width: size, height: size,
-      decoration: BoxDecoration(shape: BoxShape.circle, color: color),
-      child: BackdropFilter(filter: ImageFilter.blur(sigmaX: 100, sigmaY: 100), child: Container(color: Colors.transparent)),
-    );
-  }
-
-  Widget _buildCustomHeader() {
+  Widget _buildPageHeader() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('RETAIL INTELLIGENCE', style: TextStyle(fontSize: 12, color: Colors.blue[700], fontWeight: FontWeight.bold, letterSpacing: 2)),
-            const SizedBox(height: 4),
-            const Text('Traffic Analytics', style: TextStyle(fontSize: 36, fontWeight: FontWeight.w800, color: Colors.black87, letterSpacing: -1)),
+            const Text('Dashboard Overview', style: TextStyle(fontSize: 32, fontWeight: FontWeight.w800, color: Colors.black87, letterSpacing: -0.5)),
             if (_selectedFolderPath != null)
               Padding(
-                padding: const EdgeInsets.only(top: 8.0),
-                child: Text('Source: $_selectedFolderPath', style: const TextStyle(color: Colors.black54, fontSize: 12)),
-              ),
-            if (_isFtpRunning)
-              Padding(
-                padding: const EdgeInsets.only(top: 12.0),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(color: Colors.green.withOpacity(0.1), borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.green.withOpacity(0.3))),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.wifi_tethering, color: Colors.green[700], size: 16),
-                      const SizedBox(width: 8),
-                      Text('FTP Active: ftp://$_localIp:2121', style: TextStyle(color: Colors.green[700], fontSize: 12, fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                ),
+                padding: const EdgeInsets.only(top: 4.0),
+                child: Text('Source: $_selectedFolderPath', style: const TextStyle(color: Colors.black45, fontSize: 14)),
               ),
           ],
         ),
@@ -667,66 +702,42 @@ class _DashboardScreenState extends State<DashboardScreen> {
         Row(
           children: [
             if (_rawData.isNotEmpty) ...[
-              GlassCard(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-                child: InkWell(
-                  onTap: _showPosEntryDialog,
-                  child: Row(
-                    children: [
-                      Icon(Icons.point_of_sale, color: Colors.orange[700]),
-                      const SizedBox(width: 8),
-                      const Text('ENTER POS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.black87, letterSpacing: 1)),
-                    ],
-                  ),
+              FilterChip(
+                selected: _isCompareMode,
+                onSelected: (val) {
+                  setState(() {
+                    _isCompareMode = val;
+                    _applyFilter();
+                  });
+                },
+                label: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  child: Text('Compare vs Previous', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                 ),
-              ),
-              const SizedBox(width: 16),
-
-              GlassCard(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-                child: InkWell(
-                  onTap: _showExportMenu,
-                  child: Row(
-                    children: [
-                      Icon(Icons.download, color: Colors.pink[500]),
-                      const SizedBox(width: 8),
-                      const Text('EXPORT', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.black87, letterSpacing: 1)),
-                    ],
-                  ),
-                ),
+                selectedColor: Colors.blue.withOpacity(0.15),
+                checkmarkColor: Colors.blue[700],
+                backgroundColor: Colors.white,
+                shape: StadiumBorder(side: BorderSide(color: _isCompareMode ? Colors.blue[700]! : Colors.grey[300]!, width: 1.5)),
               ),
               const SizedBox(width: 16),
             ],
 
-            GlassCard(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-              child: InkWell(
-                onTap: () async {
-                  await Navigator.push(context, MaterialPageRoute(builder: (context) => const FtpServerScreen()));
-                  _checkFtpStatus();
-                },
-                child: const Row(
-                  children: [
-                    Icon(Icons.wifi_tethering, color: Colors.black54),
-                    SizedBox(width: 8),
-                    Text('FTP SERVER', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.black87, letterSpacing: 1)),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(width: 16),
-
-            GlassCard(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-              child: InkWell(
-                onTap: _pickFolderAndLoadData,
-                child: Row(
-                  children: [
-                    Icon(Icons.drive_folder_upload, color: Colors.blue[700]),
-                    const SizedBox(width: 12),
-                    const Text('IMPORT DATA', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.black87, letterSpacing: 1)),
-                  ],
-                ),
+            Container(
+              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.grey[300]!, width: 1.5)),
+              padding: const EdgeInsets.all(4),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(icon: const Icon(Icons.chevron_left, color: Colors.black54), onPressed: () => _shiftDate(-1)),
+                  GestureDetector(
+                    onTap: _pickDateRange,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Text(_getFormattedDateString(), style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black87, fontSize: 16)),
+                    ),
+                  ),
+                  IconButton(icon: const Icon(Icons.chevron_right, color: Colors.black54), onPressed: () => _shiftDate(1)),
+                ],
               ),
             ),
           ],
@@ -739,17 +750,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return Center(
       child: Padding(
         padding: const EdgeInsets.only(top: 100),
-        child: GlassCard(
-          padding: const EdgeInsets.all(60),
-          child: Column(
-            children: const [
-              Icon(Icons.radar, size: 80, color: Colors.black12),
-              SizedBox(height: 24),
-              Text('System Standby', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.black87)),
-              SizedBox(height: 12),
-              Text('Connect to a data source to begin tracking algorithms.', style: TextStyle(color: Colors.black54)),
-            ],
-          ),
+        child: Column(
+          children: [
+            Icon(Icons.folder_open, size: 100, color: Colors.grey[300]),
+            const SizedBox(height: 24),
+            const Text('No Data Selected', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.black87)),
+            const SizedBox(height: 12),
+            const Text('Please select a data source or start the FTP server from the menu.', style: TextStyle(color: Colors.black54, fontSize: 16)),
+            const SizedBox(height: 32),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[700], foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 20)),
+              onPressed: _pickFolderAndLoadData,
+              icon: const Icon(Icons.drive_folder_upload, size: 24),
+              label: const Text('IMPORT DATA', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            )
+          ],
         ),
       ),
     );
@@ -759,139 +774,180 @@ class _DashboardScreenState extends State<DashboardScreen> {
     int totalVisitors = (_totalIn + _totalOut) ~/ 2;
 
     final cards = [
-      _buildMetricCard('TOTAL IN', _totalIn.toString(), Icons.login, Colors.blue[600]!),
-      _buildMetricCard('TOTAL OUT', _totalOut.toString(), Icons.logout, Colors.pink[500]!),
-      _buildMetricCard('TOTAL VISITORS', totalVisitors.toString(), Icons.groups, Colors.green[600]!),
-      _buildMetricCard('PEAK HOUR', _peakHour, Icons.trending_up, Colors.deepPurple[400]!),
+      _buildWhiteMetricCard('Total In', _totalIn.toString(), Icons.login, Colors.blue, trendWidget: _buildTrendBadge(_totalIn, _compareTotalIn)),
+      _buildWhiteMetricCard('Total Out', _totalOut.toString(), Icons.logout, Colors.orange, trendWidget: _buildTrendBadge(_totalOut, _compareTotalOut)),
+      _buildWhiteMetricCard('Total Visitors', totalVisitors.toString(), Icons.groups, Colors.green, trendWidget: _buildTrendBadge(totalVisitors, _compareTotalVisitors)),
+      _buildWhiteMetricCard('Peak Hour', _peakHour, Icons.access_time, Colors.purple),
     ];
 
-    if (isDesktop) {
-      return Row(children: cards.map((c) => Expanded(child: Padding(padding: const EdgeInsets.symmetric(horizontal: 6), child: c))).toList());
-    } else {
-      return Wrap(spacing: 12, runSpacing: 12, children: cards.map((c) => SizedBox(width: MediaQuery.of(context).size.width / 2 - 40, child: c)).toList());
-    }
+    if (isDesktop) { return Row(children: cards.map((c) => Expanded(child: Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: c))).toList()); }
+    else { return Wrap(spacing: 16, runSpacing: 16, children: cards.map((c) => SizedBox(width: MediaQuery.of(context).size.width / 2 - 40, child: c)).toList()); }
   }
 
   Widget _buildBusinessPerformanceCards(bool isDesktop) {
     int totalVisitors = (_totalIn + _totalOut) ~/ 2;
-
     double conversionRate = totalVisitors > 0 ? (_currentClients / totalVisitors) * 100 : 0.0;
     double avgBasket = _currentClients > 0 ? (_currentCa / _currentClients) : 0.0;
     double upt = _currentClients > 0 ? (_currentArticles / _currentClients) : 0.0;
 
+    double compareConv = _compareTotalVisitors > 0 ? (_compareClients / _compareTotalVisitors) * 100 : 0.0;
+    double compareBasket = _compareClients > 0 ? (_compareCa / _compareClients) : 0.0;
+    double compareUpt = _compareClients > 0 ? (_compareArticles / _compareClients) : 0.0;
+
     final cards = [
-      _buildMetricCard('CONVERSION RATE', '${conversionRate.toStringAsFixed(1)}%', Icons.track_changes, Colors.orange[600]!),
-      _buildMetricCard('REVENUE (CA)', _currentCa.toStringAsFixed(2), Icons.attach_money, Colors.orange[600]!),
-      _buildMetricCard('AVG BASKET', avgBasket.toStringAsFixed(2), Icons.shopping_cart, Colors.orange[600]!),
-      _buildMetricCard('U.P.T', upt.toStringAsFixed(2), Icons.layers, Colors.orange[600]!),
+      _buildWhiteMetricCard('Conversion Rate', '${conversionRate.toStringAsFixed(1)}%', Icons.track_changes, Colors.red, trendWidget: _buildTrendBadge(conversionRate, compareConv)),
+      _buildWhiteMetricCard('Revenue (CA)', '${_currentCa.toStringAsFixed(0)} DZD', Icons.payments, Colors.teal, trendWidget: _buildTrendBadge(_currentCa, _compareCa)),
+      _buildWhiteMetricCard('Avg Basket', '${avgBasket.toStringAsFixed(2)} DZD', Icons.shopping_cart, Colors.indigo, trendWidget: _buildTrendBadge(avgBasket, compareBasket)),
+      _buildWhiteMetricCard('U.P.T', upt.toStringAsFixed(2), Icons.layers, Colors.pink, trendWidget: _buildTrendBadge(upt, compareUpt)),
     ];
 
-    if (isDesktop) {
-      return Row(children: cards.map((c) => Expanded(child: Padding(padding: const EdgeInsets.symmetric(horizontal: 6), child: c))).toList());
-    } else {
-      return Wrap(spacing: 12, runSpacing: 12, children: cards.map((c) => SizedBox(width: MediaQuery.of(context).size.width / 2 - 40, child: c)).toList());
-    }
+    if (isDesktop) { return Row(children: cards.map((c) => Expanded(child: Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: c))).toList()); }
+    else { return Wrap(spacing: 16, runSpacing: 16, children: cards.map((c) => SizedBox(width: MediaQuery.of(context).size.width / 2 - 40, child: c)).toList()); }
   }
 
-  Widget _buildMetricCard(String title, String value, IconData icon, Color color) {
-    return GlassCard(
-      padding: const EdgeInsets.all(24),
-      child: Column(
+  Widget _buildWhiteMetricCard(String title, String value, IconData icon, MaterialColor colorTheme, {Widget? trendWidget}) {
+    return Container(
+      padding: const EdgeInsets.all(24), // Increased padding for 4K
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 15, offset: const Offset(0, 5))],
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(title, style: const TextStyle(fontSize: 12, color: Colors.black54, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
-              Icon(icon, color: color, size: 20),
+              Text(title, style: const TextStyle(fontSize: 15, color: Colors.black54, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              Text(value, style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: Colors.black87, letterSpacing: -0.5)),
+              if (trendWidget != null) trendWidget,
             ],
           ),
-          const SizedBox(height: 16),
-          Text(value, style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: Colors.black87, letterSpacing: -1)),
+          Container(
+            padding: const EdgeInsets.all(16), // Larger icon background
+            decoration: BoxDecoration(color: colorTheme[50], shape: BoxShape.circle),
+            child: Icon(icon, color: colorTheme[600], size: 28), // Larger icon
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildInteractiveChartSection(bool isDesktop) {
-    return GlassCard(
-      padding: const EdgeInsets.all(24),
+  Widget _buildInteractiveChartSection() {
+    List<LineChartBarData> chartLines = [];
+
+    if (_isCompareMode) {
+      chartLines.add(LineChartBarData(
+        spots: _displayedData.asMap().entries.map((e) => FlSpot(e.key.toDouble(), ((e.value.inCount + e.value.outCount) / 2).toDouble())).toList(),
+        isCurved: true, color: Colors.blue[600], barWidth: 4, isStrokeCapRound: true, dotData: FlDotData(show: false),
+        belowBarData: BarAreaData(show: true, gradient: LinearGradient(colors: [Colors.blue.withOpacity(0.2), Colors.blue.withOpacity(0.0)], begin: Alignment.topCenter, end: Alignment.bottomCenter)),
+      ));
+      chartLines.add(LineChartBarData(
+        spots: _compareDisplayedData.asMap().entries.map((e) => FlSpot(e.key.toDouble(), ((e.value.inCount + e.value.outCount) / 2).toDouble())).toList(),
+        isCurved: true, color: Colors.grey[400], barWidth: 3, dashArray: [5, 5], isStrokeCapRound: true, dotData: FlDotData(show: false),
+      ));
+    } else {
+      chartLines.add(LineChartBarData(
+        spots: _displayedData.asMap().entries.map((e) => FlSpot(e.key.toDouble(), e.value.inCount.toDouble())).toList(),
+        isCurved: true, color: Colors.blue[600], barWidth: 4, isStrokeCapRound: true, dotData: FlDotData(show: false),
+        belowBarData: BarAreaData(show: true, gradient: LinearGradient(colors: [Colors.blue.withOpacity(0.2), Colors.blue.withOpacity(0.0)], begin: Alignment.topCenter, end: Alignment.bottomCenter)),
+      ));
+      chartLines.add(LineChartBarData(
+        spots: _displayedData.asMap().entries.map((e) => FlSpot(e.key.toDouble(), e.value.outCount.toDouble())).toList(),
+        isCurved: true, color: Colors.pink[400], barWidth: 4, isStrokeCapRound: true, dotData: FlDotData(show: false),
+        belowBarData: BarAreaData(show: true, gradient: LinearGradient(colors: [Colors.pink.withOpacity(0.2), Colors.pink.withOpacity(0.0)], begin: Alignment.topCenter, end: Alignment.bottomCenter)),
+      ));
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(32), // Increased padding
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 15, offset: const Offset(0, 5))],
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Wrap(
-            alignment: WrapAlignment.spaceBetween,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            runSpacing: 16,
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Container(
-                decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(12)),
-                padding: const EdgeInsets.all(4),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(icon: const Icon(Icons.chevron_left, color: Colors.black54), onPressed: () => _shiftDate(-1)),
-                    GestureDetector(
-                      onTap: _pickDateRange,
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: Text(_getFormattedDateString(), style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black87)),
-                      ),
-                    ),
-                    IconButton(icon: const Icon(Icons.chevron_right, color: Colors.black54), onPressed: () => _shiftDate(1)),
-                  ],
-                ),
+              Row(
+                children: [
+                  const Text('Traffic Overview', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87)),
+                  const SizedBox(width: 16),
+                  if (_isCompareMode) ...[
+                    Row(children: [Icon(Icons.circle, size: 12, color: Colors.blue[600]), const SizedBox(width: 6), const Text('Current', style: TextStyle(fontSize: 14, color: Colors.black54))]),
+                    const SizedBox(width: 16),
+                    Row(children: [Icon(Icons.circle, size: 12, color: Colors.grey[400]), const SizedBox(width: 6), const Text('Previous', style: TextStyle(fontSize: 14, color: Colors.black54))]),
+                  ] else ...[
+                    Row(children: [Icon(Icons.circle, size: 12, color: Colors.blue[600]), const SizedBox(width: 6), const Text('In', style: TextStyle(fontSize: 14, color: Colors.black54))]),
+                    const SizedBox(width: 16),
+                    Row(children: [Icon(Icons.circle, size: 12, color: Colors.pink[400]), const SizedBox(width: 6), const Text('Out', style: TextStyle(fontSize: 14, color: Colors.black54))]),
+                  ]
+                ],
               ),
 
               Row(
-                mainAxisSize: MainAxisSize.min,
                 children: [
                   if (_availableCameras.length > 1)
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      margin: const EdgeInsets.only(right: 16),
-                      decoration: BoxDecoration(color: Colors.blue.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                      decoration: BoxDecoration(color: Colors.blue.withOpacity(0.05), borderRadius: BorderRadius.circular(8)),
                       child: DropdownButtonHideUnderline(
                         child: DropdownButton<String>(
-                          value: _selectedCamera, dropdownColor: Colors.white, icon: Icon(Icons.camera_alt, color: Colors.blue[700], size: 18), style: TextStyle(color: Colors.blue[700], fontWeight: FontWeight.bold),
-                          items: _availableCameras.map((String camera) { return DropdownMenuItem<String>(value: camera, child: Padding(padding: const EdgeInsets.only(left: 8.0), child: Text(camera == 'All Doors' ? 'All Doors' : camera.toUpperCase()))); }).toList(),
+                          value: _selectedCamera, icon: Icon(Icons.keyboard_arrow_down, color: Colors.blue[700]), style: TextStyle(color: Colors.blue[700], fontWeight: FontWeight.bold, fontSize: 16),
+                          items: _availableCameras.map((String camera) { return DropdownMenuItem<String>(value: camera, child: Text(camera == 'All Doors' ? 'All Doors' : camera.toUpperCase())); }).toList(),
                           onChanged: (String? newValue) { if (newValue != null) { setState(() { _selectedCamera = newValue; _applyFilter(); }); } },
                         ),
                       ),
                     ),
-
-                  DropdownButtonHideUnderline(
-                    child: DropdownButton<ChartFilter>(
-                      value: _currentFilter, dropdownColor: Colors.white, icon: const Icon(Icons.timeline, color: Colors.black54), style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.bold),
-                      items: const [ DropdownMenuItem(value: ChartFilter.hourly, child: Text(' Hourly Timeline')), DropdownMenuItem(value: ChartFilter.daily, child: Text(' Daily Timeline')) ],
-                      onChanged: (ChartFilter? newValue) { if (newValue != null) { setState(() { _currentFilter = newValue; _applyFilter(); }); } },
+                  const SizedBox(width: 16),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(8)),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<ChartFilter>(
+                        value: _currentFilter, icon: const Icon(Icons.keyboard_arrow_down, color: Colors.black54), style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 16),
+                        items: const [ DropdownMenuItem(value: ChartFilter.hourly, child: Text('Hourly View')), DropdownMenuItem(value: ChartFilter.daily, child: Text('Daily View')) ],
+                        onChanged: (ChartFilter? newValue) { if (newValue != null) { setState(() { _currentFilter = newValue; _applyFilter(); }); } },
+                      ),
                     ),
                   ),
                 ],
-              ),
+              )
             ],
           ),
           const SizedBox(height: 40),
 
           SizedBox(
-            height: 450,
+            height: 450, // Slightly taller chart
             child: LineChart(
               LineChartData(
                 lineTouchData: LineTouchData(
                   touchTooltipData: LineTouchTooltipData(
-                    tooltipBgColor: Colors.white.withOpacity(0.95),
-                    tooltipRoundedRadius: 8,
+                    tooltipBgColor: Colors.black87,
                     getTooltipItems: (touchedSpots) {
                       return touchedSpots.map((LineBarSpot touchedSpot) {
-                        final textStyle = TextStyle(color: touchedSpot.bar.color ?? Colors.black87, fontWeight: FontWeight.bold, fontSize: 14);
-                        String timeText = _displayedData[touchedSpot.x.toInt()].time;
-                        String type = touchedSpot.barIndex == 0 ? "In: " : "Out: ";
+                        final textStyle = TextStyle(color: touchedSpot.bar.color ?? Colors.white, fontWeight: FontWeight.bold, fontSize: 14);
+                        String timeText = _displayedData.length > touchedSpot.x.toInt() ? _displayedData[touchedSpot.x.toInt()].time : "";
+                        String type = "";
+
+                        if (_isCompareMode) {
+                          type = touchedSpot.barIndex == 0 ? "Current: " : "Previous: ";
+                        } else {
+                          type = touchedSpot.barIndex == 0 ? "In: " : "Out: ";
+                        }
+
                         return LineTooltipItem("$timeText\n$type${touchedSpot.y.toInt()}", textStyle);
                       }).toList();
                     },
                   ),
                 ),
-                gridData: FlGridData(show: true, drawVerticalLine: false, getDrawingHorizontalLine: (value) => FlLine(color: Colors.black.withOpacity(0.05), strokeWidth: 1)),
+                gridData: FlGridData(show: true, drawVerticalLine: false, getDrawingHorizontalLine: (value) => FlLine(color: Colors.grey[200]!, strokeWidth: 1)),
                 titlesData: FlTitlesData(
                   rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
                   topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
@@ -902,66 +958,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         int index = value.toInt();
                         if (index >= 0 && index < _displayedData.length) {
                           if (_displayedData.length > 12 && index % 2 != 0) return const SizedBox.shrink();
-                          return Padding(padding: const EdgeInsets.only(top: 10.0), child: Text(_displayedData[index].time, style: const TextStyle(color: Colors.black54, fontSize: 11, fontWeight: FontWeight.bold)));
+                          return Padding(padding: const EdgeInsets.only(top: 10.0), child: Text(_displayedData[index].time, style: const TextStyle(color: Colors.black54, fontSize: 12)));
                         }
                         return const SizedBox.shrink();
                       },
                     ),
                   ),
                   leftTitles: AxisTitles(
-                    sideTitles: SideTitles(showTitles: true, reservedSize: 40, getTitlesWidget: (value, meta) { return Text(value.toInt().toString(), style: const TextStyle(color: Colors.black54, fontSize: 12)); }),
+                    sideTitles: SideTitles(showTitles: true, reservedSize: 40, getTitlesWidget: (value, meta) { return Text(value.toInt().toString(), style: const TextStyle(color: Colors.black54, fontSize: 13)); }),
                   ),
                 ),
                 borderData: FlBorderData(show: false),
-                lineBarsData: [
-                  LineChartBarData(
-                    spots: _displayedData.asMap().entries.map((e) => FlSpot(e.key.toDouble(), e.value.inCount.toDouble())).toList(),
-                    isCurved: true, color: Colors.blue[600], barWidth: 3, isStrokeCapRound: true, dotData: FlDotData(show: false),
-                    belowBarData: BarAreaData(show: true, gradient: LinearGradient(colors: [Colors.blue.withOpacity(0.2), Colors.blue.withOpacity(0.0)], begin: Alignment.topCenter, end: Alignment.bottomCenter)),
-                  ),
-                  LineChartBarData(
-                    spots: _displayedData.asMap().entries.map((e) => FlSpot(e.key.toDouble(), e.value.outCount.toDouble())).toList(),
-                    isCurved: true, color: Colors.pink[500], barWidth: 3, isStrokeCapRound: true, dotData: FlDotData(show: false),
-                    belowBarData: BarAreaData(show: true, gradient: LinearGradient(colors: [Colors.pink.withOpacity(0.2), Colors.pink.withOpacity(0.0)], begin: Alignment.topCenter, end: Alignment.bottomCenter)),
-                  ),
-                ],
+                lineBarsData: chartLines,
               ),
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class GlassCard extends StatelessWidget {
-  final Widget child;
-  final EdgeInsetsGeometry padding;
-
-  const GlassCard({Key? key, required this.child, required this.padding}) : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(16),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-        child: Container(
-          padding: padding,
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.75), // Frosted white for light theme
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.white.withOpacity(0.5), width: 1.5), // Soft white border
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.02),
-                blurRadius: 10,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: child,
-        ),
       ),
     );
   }
