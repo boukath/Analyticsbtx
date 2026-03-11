@@ -39,6 +39,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String _localIp = "";
   bool _isFtpRunning = false;
 
+  // --- IP Security Variables ---
+  Timer? _securityTimer;
+  bool _isIpMismatch = false;
+  String _expectedIp = "";
+  String _actualIp = "";
+
+  // --- NEW: Aggressive Alert Variables ---
+  bool _isAlertSilenced = false;
+  bool _isAlertDialogOpen = false;
+
   List<String> _availableCameras = ['All Doors'];
   String _selectedCamera = 'All Doors';
 
@@ -56,7 +66,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String _storeLocation = "MAIN BRANCH";
   String? _storeLogoPath;
 
-  // --- CAMPAIGN MATRIX VARIABLES ---
   bool _isCompareMode = false;
   List<PeopleCount> _compareDisplayedData = [];
   int _compareTotalIn = 0;
@@ -75,13 +84,133 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _loadPosDatabase();
     _loadSavedFolder();
     _checkFtpStatus();
+    _startSecurityMonitor();
   }
 
   @override
   void dispose() {
     _autoRefreshTimer?.cancel();
+    _securityTimer?.cancel();
     FtpService.stopServer();
     super.dispose();
+  }
+
+  // --- UPDATED: Security Monitor with Aggressive Alert ---
+  void _startSecurityMonitor() {
+    _securityTimer = Timer.periodic(const Duration(seconds: 10), (timer) async {
+      final prefs = await SharedPreferences.getInstance();
+      String savedIp = prefs.getString('ftp_ip') ?? '';
+
+      if (savedIp.isEmpty) return; // Ignore if no IP is configured yet
+
+      String currentIp = await FtpService.getLocalIpAddress();
+
+      if (mounted) {
+        setState(() {
+          _expectedIp = savedIp;
+          _actualIp = currentIp;
+          _isIpMismatch = (currentIp != savedIp);
+        });
+
+        // If the IP is correct, reset the silence flag so it can alert again if it breaks later
+        if (!_isIpMismatch) {
+          _isAlertSilenced = false;
+        }
+
+        int totalVisitors = _totalIn + _totalOut; // Check if "comptage is still 0"
+
+        // TRIGGER CONDITION: IP is wrong AND Comptage is 0 AND Not silenced AND Dialog isn't already open
+        if (_isIpMismatch && totalVisitors == 0 && !_isAlertSilenced && !_isAlertDialogOpen) {
+          _showPasswordAlertDialog();
+        }
+      }
+    });
+  }
+
+  // --- NEW: Aggressive Password Alert Dialog ---
+  void _showPasswordAlertDialog() {
+    _isAlertDialogOpen = true;
+    TextEditingController passCtrl = TextEditingController();
+    String errorMessage = "";
+
+    showDialog(
+      context: context,
+      barrierDismissible: false, // Forces interaction! They cannot click outside to close it.
+      builder: (BuildContext c) {
+        return StatefulBuilder(
+            builder: (context, setDialogState) {
+              return AlertDialog(
+                backgroundColor: const Color(0xFF1E293B),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: const BorderSide(color: Colors.redAccent, width: 2)),
+                title: const Row(
+                  children: [
+                    Icon(Icons.warning_amber_rounded, color: Colors.redAccent, size: 32),
+                    SizedBox(width: 12),
+                    Text("CRITICAL NETWORK ERROR", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "The PC's IP Address has changed and NO TRAFFIC (0) is being recorded!\n\n"
+                          "Expected IP: $_expectedIp\n"
+                          "Current IP: ${_actualIp == '127.0.0.1' ? 'DISCONNECTED' : _actualIp}\n\n"
+                          "Please fix the network immediately, or enter the technician password to silence this alert.",
+                      style: const TextStyle(color: Colors.white70, fontSize: 16, height: 1.5),
+                    ),
+                    const SizedBox(height: 20),
+                    TextField(
+                      controller: passCtrl,
+                      obscureText: true,
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                      decoration: InputDecoration(
+                        labelText: 'Technician Password',
+                        labelStyle: const TextStyle(color: Colors.white54),
+                        filled: true,
+                        fillColor: Colors.black45,
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                        errorText: errorMessage.isNotEmpty ? errorMessage : null,
+                      ),
+                    ),
+                  ],
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () {
+                      // Close dialog and go to FTP settings to fix the network
+                      _isAlertDialogOpen = false;
+                      Navigator.of(c).pop();
+                      Navigator.push(context, MaterialPageRoute(builder: (context) => const FtpServerScreen()));
+                    },
+                    child: const Text("FIX NETWORK", style: TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold, letterSpacing: 1)),
+                  ),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent, foregroundColor: Colors.white),
+                    onPressed: () {
+                      if (passCtrl.text == "Boitexinfo") {
+                        // Password is correct! Silence the popups.
+                        _isAlertSilenced = true;
+                        _isAlertDialogOpen = false;
+                        Navigator.of(c).pop();
+                      } else {
+                        // Wrong password
+                        setDialogState(() {
+                          errorMessage = "Incorrect Password!";
+                        });
+                      }
+                    },
+                    child: const Text("SILENCE ALERT", style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                ],
+              );
+            }
+        );
+      },
+    ).then((_) {
+      _isAlertDialogOpen = false; // Reset if it somehow closes
+    });
   }
 
   Future<void> _loadStoreProfile() async {
@@ -142,7 +271,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         }
       }
 
-      // POS Metrics for Previous Period
       if (_isCompareMode) {
         Duration duration = end.difference(start);
         DateTime compareEnd = start.subtract(const Duration(days: 1));
@@ -218,7 +346,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   void _applyFilter() {
     setState(() {
-      // 1. Current Period Filter
       List<PeopleCount> filteredData = _rawData.where((item) {
         if (_selectedCamera != 'All Doors' && item.doorName != _selectedCamera) return false;
         if (_selectedDateRange == null) return true;
@@ -241,7 +368,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _occupancy = _totalIn - _totalOut;
       if (_occupancy < 0) _occupancy = 0;
 
-      // 2. Previous Period Filter (For Comparison)
       if (_isCompareMode && _selectedDateRange != null) {
         Duration duration = _selectedDateRange!.end.difference(_selectedDateRange!.start);
         DateTime compareEnd = _selectedDateRange!.start.subtract(const Duration(days: 1));
@@ -296,7 +422,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   String _formatDateOnly(DateTime d) => "${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
 
-  // --- TREND CALCULATOR FOR BADGES ---
   Widget _buildTrendBadge(num current, num previous) {
     if (!_isCompareMode) return const SizedBox.shrink();
     if (previous == 0) return const SizedBox.shrink();
@@ -497,10 +622,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // ==========================================
-  // 🎨 4K PREMIUM SAAS UI LAYOUT
-  // ==========================================
-
   @override
   Widget build(BuildContext context) {
     final isDesktop = MediaQuery.of(context).size.width > 800;
@@ -509,13 +630,40 @@ class _DashboardScreenState extends State<DashboardScreen> {
       backgroundColor: const Color(0xFFF3F4F6),
       body: Row(
         children: [
-          // Elegant Dark Sidebar
           if (isDesktop) _buildSidebar(),
 
           Expanded(
             child: Column(
               children: [
                 _buildTopAppBar(),
+
+                // The Passive Security Banner (Always shows if IP is wrong, even if popups are silenced)
+                if (_isIpMismatch)
+                  Container(
+                    width: double.infinity,
+                    color: Colors.red[700],
+                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 24),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 28),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Text(
+                            "CRITICAL: Network IP Changed! Expected: $_expectedIp | Current: ${_actualIp == '127.0.0.1' ? 'DISCONNECTED' : _actualIp}. Cameras are currently blind.",
+                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                          ),
+                        ),
+                        ElevatedButton(
+                          style: ElevatedButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.red[700]),
+                          onPressed: () {
+                            Navigator.push(context, MaterialPageRoute(builder: (context) => const FtpServerScreen()));
+                          },
+                          child: const Text("FIX NETWORK", style: TextStyle(fontWeight: FontWeight.bold)),
+                        )
+                      ],
+                    ),
+                  ),
 
                 Expanded(
                   child: _isLoading
@@ -526,7 +674,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         _buildPageHeader(),
-                        const SizedBox(height: 32), // Increased spacing for 4K
+                        const SizedBox(height: 32),
 
                         if (_rawData.isEmpty)
                           _buildEmptyState()
@@ -552,7 +700,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _buildSidebar() {
     return Container(
       width: 260,
-      color: const Color(0xFF1E293B), // Elegant Dark Slate Sidebar
+      color: const Color(0xFF1E293B),
       child: Column(
         children: [
           const SizedBox(height: 40),
@@ -569,12 +717,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
           _buildSidebarItem(Icons.dashboard, 'Dashboard', isActive: true),
           _buildSidebarItem(Icons.source, 'Data Source', onTap: _pickFolderAndLoadData),
 
-          _buildSidebarItem(Icons.wifi_tethering, 'FTP Server', onTap: () async {
-            await Navigator.push(context, MaterialPageRoute(builder: (context) => const FtpServerScreen()));
-            _checkFtpStatus();
-          }),
+          _buildSidebarItem(
+              Icons.wifi_tethering,
+              'FTP Server',
+              iconColor: _isIpMismatch ? Colors.redAccent : null,
+              textColor: _isIpMismatch ? Colors.redAccent : null,
+              onTap: () async {
+                await Navigator.push(context, MaterialPageRoute(builder: (context) => const FtpServerScreen()));
+                _checkFtpStatus();
+              }
+          ),
 
-          // --- NEW: CLOUD SYNC MENU ITEM ---
           _buildSidebarItem(Icons.cloud_upload, 'Cloud Sync (B2)', onTap: () {
             Navigator.push(context, MaterialPageRoute(builder: (context) => const CloudSyncScreen()));
           }),
@@ -583,7 +736,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           _buildSidebarItem(Icons.download, 'Export Reports', onTap: _rawData.isNotEmpty ? _showExportMenu : null),
 
           const Spacer(),
-          if (_isFtpRunning)
+          if (_isFtpRunning && !_isIpMismatch)
             Container(
               margin: const EdgeInsets.all(24),
               padding: const EdgeInsets.all(16),
@@ -602,10 +755,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildSidebarItem(IconData icon, String title, {bool isActive = false, VoidCallback? onTap}) {
+  Widget _buildSidebarItem(IconData icon, String title, {bool isActive = false, Color? iconColor, Color? textColor, VoidCallback? onTap}) {
     return ListTile(
-      leading: Icon(icon, color: isActive ? Colors.blue[400] : Colors.white54),
-      title: Text(title, style: TextStyle(color: isActive ? Colors.blue[400] : Colors.white54, fontWeight: isActive ? FontWeight.bold : FontWeight.normal, fontSize: 16)),
+      leading: Icon(icon, color: iconColor ?? (isActive ? Colors.blue[400] : Colors.white54)),
+      title: Text(title, style: TextStyle(color: textColor ?? (isActive ? Colors.blue[400] : Colors.white54), fontWeight: isActive ? FontWeight.bold : FontWeight.normal, fontSize: 16)),
       contentPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 8),
       onTap: onTap,
     );
@@ -807,7 +960,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _buildWhiteMetricCard(String title, String value, IconData icon, MaterialColor colorTheme, {Widget? trendWidget}) {
     return Container(
-      padding: const EdgeInsets.all(24), // Increased padding for 4K
+      padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
@@ -827,9 +980,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ],
           ),
           Container(
-            padding: const EdgeInsets.all(16), // Larger icon background
+            padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(color: colorTheme[50], shape: BoxShape.circle),
-            child: Icon(icon, color: colorTheme[600], size: 28), // Larger icon
+            child: Icon(icon, color: colorTheme[600], size: 28),
           ),
         ],
       ),
@@ -863,7 +1016,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
 
     return Container(
-      padding: const EdgeInsets.all(32), // Increased padding
+      padding: const EdgeInsets.all(32),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
@@ -924,7 +1077,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           const SizedBox(height: 40),
 
           SizedBox(
-            height: 450, // Slightly taller chart
+            height: 450,
             child: LineChart(
               LineChartData(
                 lineTouchData: LineTouchData(

@@ -15,9 +15,9 @@ class FtpServerScreen extends StatefulWidget {
 
 class _FtpServerScreenState extends State<FtpServerScreen> {
   final TextEditingController _ipController = TextEditingController();
-  final TextEditingController _portController = TextEditingController(text: "2121");
-  final TextEditingController _userController = TextEditingController(text: "camera");
-  final TextEditingController _passController = TextEditingController(text: "password");
+  final TextEditingController _portController = TextEditingController();
+  final TextEditingController _userController = TextEditingController();
+  final TextEditingController _passController = TextEditingController();
 
   String _selectedDirectory = "No folder selected";
   bool _isRunning = false;
@@ -31,15 +31,12 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
     _initSettings();
     _isRunning = FtpService.isRunning;
 
-    // Listen to the live log stream!
     FtpService.logStream.listen((logMessage) {
       if (mounted) {
         setState(() {
           _consoleLogs.add(logMessage);
-          // Keep logs from getting infinitely huge
           if (_consoleLogs.length > 200) _consoleLogs.removeAt(0);
         });
-        // Auto-scroll to bottom of terminal
         Future.delayed(const Duration(milliseconds: 100), () {
           if (_scrollController.hasClients) {
             _scrollController.animateTo(
@@ -54,15 +51,25 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
   }
 
   Future<void> _initSettings() async {
-    // Get the PC IP automatically
-    String ip = await FtpService.getLocalIpAddress();
-
-    // Load previously saved folder if exists
     final prefs = await SharedPreferences.getInstance();
+
+    // --- NEW: Load saved expected IP, or auto-detect if first time ---
+    String savedIp = prefs.getString('ftp_ip') ?? '';
+    if (savedIp.isEmpty) {
+      savedIp = await FtpService.getLocalIpAddress();
+    }
+
     String? savedPath = prefs.getString('saved_data_folder');
+    int savedPort = prefs.getInt('ftp_port') ?? 2121;
+    String savedUser = prefs.getString('ftp_user') ?? "camera";
+    String savedPass = prefs.getString('ftp_pass') ?? "password";
 
     setState(() {
-      _ipController.text = ip; // Set IP (readonly)
+      _ipController.text = savedIp; // Sets the editable field
+      _portController.text = savedPort.toString();
+      _userController.text = savedUser;
+      _passController.text = savedPass;
+
       if (savedPath != null && savedPath.isNotEmpty) {
         _selectedDirectory = savedPath;
       }
@@ -92,11 +99,19 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
       }
 
       int port = int.tryParse(_portController.text) ?? 2121;
+
+      // --- NEW: Save the Technician's Expected IP ---
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('ftp_ip', _ipController.text.trim());
+      await prefs.setInt('ftp_port', port);
+      await prefs.setString('ftp_user', _userController.text.trim());
+      await prefs.setString('ftp_pass', _passController.text.trim());
+
       await FtpService.startServer(
         rootDirectory: _selectedDirectory,
         port: port,
-        username: _userController.text,
-        password: _passController.text,
+        username: _userController.text.trim(),
+        password: _passController.text.trim(),
       );
       setState(() => _isRunning = true);
     }
@@ -123,17 +138,9 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // LEFT SIDE: Settings
-                Expanded(
-                  flex: 1,
-                  child: _buildSettingsPanel(),
-                ),
+                Expanded(flex: 1, child: _buildSettingsPanel()),
                 const SizedBox(width: 32),
-                // RIGHT SIDE: The Live Log Terminal
-                Expanded(
-                  flex: 2,
-                  child: _buildLogConsole(),
-                ),
+                Expanded(flex: 2, child: _buildLogConsole()),
               ],
             ),
           ),
@@ -148,7 +155,10 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
       children: [
         const Text('CONNECTION SETTINGS', style: TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
         const SizedBox(height: 16),
-        _buildTextField("PC IP Address (Auto)", _ipController, readOnly: true),
+
+        // --- NEW: Editable IP Address Field ---
+        _buildTextField("Expected PC IP Address (Editable)", _ipController),
+
         _buildTextField("Port", _portController),
         _buildTextField("FTP Username", _userController),
         _buildTextField("FTP Password", _passController),
@@ -208,11 +218,7 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
 
   Widget _buildLogConsole() {
     return Container(
-      decoration: BoxDecoration(
-        color: Colors.black87,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white12),
-      ),
+      decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white12)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -242,14 +248,11 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
                 Color textColor = Colors.greenAccent;
                 if (logMsg.contains("❌")) textColor = Colors.redAccent;
                 if (logMsg.contains("🛑")) textColor = Colors.orangeAccent;
-                if (logMsg.contains("📁")) textColor = Colors.cyanAccent;
+                if (logMsg.contains("📁") || logMsg.contains("🔄")) textColor = Colors.cyanAccent;
 
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 4),
-                  child: Text(
-                    logMsg,
-                    style: TextStyle(color: textColor, fontFamily: 'Courier', fontSize: 13),
-                  ),
+                  child: Text(logMsg, style: TextStyle(color: textColor, fontFamily: 'Courier', fontSize: 13)),
                 );
               },
             ),

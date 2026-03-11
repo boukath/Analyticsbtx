@@ -13,7 +13,11 @@ class B2CloudService {
   static String? _bucketName;
   static bool _isEnabled = false;
 
-  // --- NEW: Live Log Stream ---
+  // --- NEW: Auto-Sync Timer & Cache Variables ---
+  static Timer? _autoSyncTimer;
+  static bool _isAutoSyncing = false;
+  static Set<String> _syncedFilesCache = {};
+
   static final StreamController<String> _logController = StreamController<String>.broadcast();
   static Stream<String> get logStream => _logController.stream;
 
@@ -23,20 +27,24 @@ class B2CloudService {
     debugPrint("B2 LOG: $message");
   }
 
-  /// Initializes the B2 connection
+  /// Initializes the B2 connection and starts the auto-sync timer
   static Future<void> initialize() async {
     final prefs = await SharedPreferences.getInstance();
     _isEnabled = prefs.getBool('b2_enabled') ?? false;
 
+    // Load our smart cache of already uploaded files
+    _syncedFilesCache = (prefs.getStringList('b2_synced_files_cache') ?? []).toSet();
+
     if (!_isEnabled) {
-      log("⏸️ Cloud sync is currently disabled.");
+      log("⏸️ Cloud sync is disabled. Stopping auto-sync.");
+      _autoSyncTimer?.cancel();
       return;
     }
 
     String endpoint = prefs.getString('b2_endpoint') ?? '';
     String accessKey = prefs.getString('b2_access_key') ?? '';
     String secretKey = prefs.getString('b2_secret_key') ?? '';
-    _bucketName = prefs.getString('b2_bucket') ?? '';
+    _bucketName = (prefs.getString('b2_bucket') ?? '').toLowerCase();
 
     endpoint = endpoint.replaceAll('https://', '').replaceAll('http://', '');
 
@@ -49,6 +57,10 @@ class B2CloudService {
           useSSL: true,
         );
         log("✅ B2 Client Initialized. Ready to sync to '$_bucketName'.");
+
+        // START THE BACKGROUND AUTOSYNC
+        _startAutoSyncTimer();
+
       } catch (e) {
         log("❌ Initialization Error: $e");
       }
@@ -57,66 +69,133 @@ class B2CloudService {
     }
   }
 
-  /// NEW: Test Connection function
-  static Future<bool> testConnection() async {
-    if (_minio == null || _bucketName == null || _bucketName!.isEmpty) {
-      log("❌ Cannot test: Please Save & Connect your credentials first.");
-      return false;
+  // --- NEW: The 30 Second Background Timer ---
+  static void _startAutoSyncTimer() {
+    _autoSyncTimer?.cancel();
+    if (_isEnabled) {
+      log("⏱️ Background Auto-Sync activated (Running every 30 seconds).");
+      _autoSyncTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+        _runAutoSync();
+      });
     }
+  }
+
+  // --- NEW: The Auto-Sync Logic ---
+  static Future<void> _runAutoSync() async {
+    // Prevent overlapping if a sync takes longer than 30 seconds
+    if (_isAutoSyncing || !_isEnabled || _minio == null) return;
+
+    _isAutoSyncing = true;
 
     try {
-      log("⏳ Generating test file...");
-      String objectName = 'comptage/SYSTEM_TEST/connection_test.txt';
+      final prefs = await SharedPreferences.getInstance();
+      String savedFolder = prefs.getString('b2_sync_folder') ?? prefs.getString('saved_data_folder') ?? '';
 
-      // Create a tiny text file in memory
-      List<int> bytes = "If you are reading this, your B2 connection is working perfectly!".codeUnits;
+      if (savedFolder.isEmpty) return; // No folder selected yet
+
+      final dir = Directory(savedFolder);
+      if (!await dir.exists()) return;
+
+      // Scan all subfolders (sas1, sas2, etc)
+      final files = dir.listSync(recursive: true)
+          .whereType<File>()
+          .where((f) => f.path.toLowerCase().endsWith('.scb'))
+          .toList();
+
+      int uploadedCount = 0;
+
+      for (var file in files) {
+        // Create a unique hash based on Path + Size.
+        // If the camera adds more lines to the .scb file, the size changes, and we upload the update!
+        String cacheKey = "${file.path}_${file.lengthSync()}";
+
+        if (!_syncedFilesCache.contains(cacheKey)) {
+          // File is missing or was updated!
+          bool success = await uploadScbFile(file, "AutoSync");
+          if (success) {
+            uploadedCount++;
+          }
+          await Future.delayed(const Duration(milliseconds: 200)); // Prevent rate limiting
+        }
+      }
+
+      if (uploadedCount > 0) {
+        log("✅ Auto-Sync complete. Synced $uploadedCount new/updated files.");
+      }
+
+    } catch (e) {
+      log("❌ Auto-Sync Error: $e");
+    } finally {
+      _isAutoSyncing = false;
+    }
+  }
+
+  /// Tests the B2 connection
+  static Future<bool> testConnection() async {
+    if (_minio == null || _bucketName == null || _bucketName!.isEmpty) {
+      log("❌ Cannot test: Please connect your credentials first.");
+      return false;
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      String folder1 = (prefs.getString('b2_folder1') ?? 'TEST_REGION').replaceAll(RegExp(r'[^a-zA-Z0-9\s_-]'), '').trim();
+      String folder2 = (prefs.getString('b2_folder2') ?? 'TEST_STORE').replaceAll(RegExp(r'[^a-zA-Z0-9\s_-]'), '').trim();
+
+      log("⏳ Generating test file...");
+      String objectName = 'comptage/$folder1/$folder2/connection_test.txt';
+      List<int> bytes = "Connection works!".codeUnits;
       Uint8List stream = Uint8List.fromList(bytes);
 
       log("☁️ Attempting to upload to bucket: '$_bucketName'...");
-
-      await _minio!.putObject(
-        _bucketName!,
-        objectName,
-        Stream.value(stream),
-        size: stream.length,
-      );
+      await _minio!.putObject(_bucketName!, objectName, Stream.value(stream), size: stream.length);
 
       log("✅ TEST SUCCESS! File created at: $objectName");
       return true;
     } catch (e) {
-      log("❌ TEST FAILED. Error details:");
-      log(e.toString());
+      log("❌ TEST FAILED: $e");
       return false;
     }
   }
 
-  /// Uploads the actual .scb file from the camera
-  static Future<void> uploadScbFile(File file, String storeName) async {
-    if (!_isEnabled || _minio == null || _bucketName == null) {
-      log("⚠️ Upload skipped: B2 not connected or disabled.");
-      return;
-    }
+  /// Uploads the actual .scb file (Used by Live FTP, Auto-Sync, and Bulk Sync)
+  static Future<bool> uploadScbFile(File file, String storeName) async {
+    if (!_isEnabled || _minio == null || _bucketName == null) return false;
 
     try {
-      String fileName = path.basename(file.path);
-      String safeStoreName = storeName.replaceAll(RegExp(r'[^a-zA-Z0-9\s]'), '').trim();
-      String objectName = 'comptage/$safeStoreName/$fileName';
+      final prefs = await SharedPreferences.getInstance();
 
-      log("☁️ Uploading $fileName...");
+      String folder1 = prefs.getString('b2_folder1') ?? 'Unknown';
+      String folder2 = prefs.getString('b2_folder2') ?? 'Unknown';
+
+      if (folder1.isEmpty) folder1 = 'Unknown_Region';
+      if (folder2.isEmpty) folder2 = 'Unknown_Store';
+
+      folder1 = folder1.replaceAll(RegExp(r'[^a-zA-Z0-9\s_-]'), '').trim();
+      folder2 = folder2.replaceAll(RegExp(r'[^a-zA-Z0-9\s_-]'), '').trim();
+
+      String cameraFolder = file.parent.path.split(Platform.pathSeparator).last;
+      cameraFolder = cameraFolder.replaceAll(RegExp(r'[^a-zA-Z0-9\s_-]'), '').trim();
+
+      String fileName = path.basename(file.path);
+      String objectName = 'comptage/$folder1/$folder2/$cameraFolder/$fileName';
+
+      log("☁️ Uploading $cameraFolder/$fileName...");
 
       final stream = file.openRead().cast<Uint8List>();
       final length = await file.length();
 
-      await _minio!.putObject(
-        _bucketName!,
-        objectName,
-        stream,
-        size: length,
-      );
+      await _minio!.putObject(_bucketName!, objectName, stream, size: length);
+
+      // --- NEW: Save this successful upload to our smart cache ---
+      String cacheKey = "${file.path}_$length";
+      _syncedFilesCache.add(cacheKey);
+      await prefs.setStringList('b2_synced_files_cache', _syncedFilesCache.toList());
 
       log("✅ Successfully synced: $objectName");
+      return true;
     } catch (e) {
       log("❌ Upload Failed for ${path.basename(file.path)}: $e");
+      return false;
     }
   }
 }

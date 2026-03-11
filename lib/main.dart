@@ -1,9 +1,23 @@
 // lib/main.dart
 
 import 'package:flutter/material.dart';
-import 'screens/dashboard_screen.dart'; // This tells main.dart where our new screen is!
+import 'screens/dashboard_screen.dart';
+import 'services/b2_cloud_service.dart';
+import 'services/ftp_service.dart';
 
-void main() {
+// NEW: A global navigator key so background services can show emergency popups anywhere!
+final GlobalKey<NavigatorState> globalNavigatorKey = GlobalKey<NavigatorState>();
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // WAKE UP BACKGROUND SERVICES GLOBALLY
+  await B2CloudService.initialize();
+  await FtpService.autoStart();
+
+  // NEW: Start the background IP security monitor
+  FtpService.startIpMonitor(globalNavigatorKey);
+
   runApp(const MyApp());
 }
 
@@ -13,14 +27,14 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: globalNavigatorKey, // Attach the global key here!
       title: 'Store Traffic Analytics',
-      debugShowCheckedModeBanner: false, // Hides the little "DEBUG" banner
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
         primarySwatch: Colors.blue,
-        brightness: Brightness.dark, // Gives our dashboard a sleek, modern dark mode!
+        brightness: Brightness.dark,
         useMaterial3: true,
       ),
-      // THIS is the magic line. It sets our DashboardScreen as the very first thing you see.
       home: const DashboardScreen(),
     );
   }

@@ -1,7 +1,9 @@
 // lib/screens/cloud_sync_screen.dart
 
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:file_picker/file_picker.dart'; // NEW: For folder picking
 import '../services/b2_cloud_service.dart';
 
 class CloudSyncScreen extends StatefulWidget {
@@ -17,6 +19,16 @@ class _CloudSyncScreenState extends State<CloudSyncScreen> {
   final TextEditingController _bucketCtrl = TextEditingController();
   final TextEditingController _accessKeyCtrl = TextEditingController();
   final TextEditingController _secretKeyCtrl = TextEditingController();
+
+  // Directory structure controllers
+  final TextEditingController _folder1Ctrl = TextEditingController();
+  final TextEditingController _folder2Ctrl = TextEditingController();
+
+  // NEW: Local folder controller
+  final TextEditingController _localFolderCtrl = TextEditingController();
+
+  // Bulk sync state
+  bool _isSyncingBulk = false;
 
   List<String> _consoleLogs = [];
   final ScrollController _scrollController = ScrollController();
@@ -56,6 +68,12 @@ class _CloudSyncScreenState extends State<CloudSyncScreen> {
       _bucketCtrl.text = prefs.getString('b2_bucket') ?? '';
       _accessKeyCtrl.text = prefs.getString('b2_access_key') ?? '';
       _secretKeyCtrl.text = prefs.getString('b2_secret_key') ?? '';
+
+      _folder1Ctrl.text = prefs.getString('b2_folder1') ?? '';
+      _folder2Ctrl.text = prefs.getString('b2_folder2') ?? '';
+
+      // Load local sync folder (fallback to dashboard folder if b2_sync_folder is empty)
+      _localFolderCtrl.text = prefs.getString('b2_sync_folder') ?? prefs.getString('saved_data_folder') ?? '';
     });
   }
 
@@ -67,6 +85,10 @@ class _CloudSyncScreenState extends State<CloudSyncScreen> {
     await prefs.setString('b2_access_key', _accessKeyCtrl.text);
     await prefs.setString('b2_secret_key', _secretKeyCtrl.text);
 
+    await prefs.setString('b2_folder1', _folder1Ctrl.text);
+    await prefs.setString('b2_folder2', _folder2Ctrl.text);
+    await prefs.setString('b2_sync_folder', _localFolderCtrl.text);
+
     B2CloudService.log("💾 Settings saved. Reconnecting...");
     await B2CloudService.initialize();
 
@@ -74,6 +96,77 @@ class _CloudSyncScreenState extends State<CloudSyncScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Cloud Sync Settings Saved!'), backgroundColor: Colors.green),
       );
+    }
+  }
+
+  // --- NEW: Open File Picker to select local folder ---
+  Future<void> _pickLocalFolder() async {
+    String? selectedDirectory = await FilePicker.platform.getDirectoryPath(
+      dialogTitle: 'Select Local Data Folder to Sync',
+    );
+
+    if (selectedDirectory != null) {
+      setState(() {
+        _localFolderCtrl.text = selectedDirectory;
+      });
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('b2_sync_folder', selectedDirectory);
+      B2CloudService.log("📁 Local data source set to: $selectedDirectory");
+    }
+  }
+
+  // --- UPDATED: Bulk Sync Logic ---
+  Future<void> _syncAllHistoricalData() async {
+    if (_isSyncingBulk) return;
+
+    setState(() => _isSyncingBulk = true);
+
+    try {
+      // NOW WE USE THE FOLDER YOU CHOSE ON THIS SCREEN!
+      String savedFolder = _localFolderCtrl.text.trim();
+
+      if (savedFolder.isEmpty) {
+        B2CloudService.log("❌ Cannot sync: Please browse and select a local data folder first.");
+        setState(() => _isSyncingBulk = false);
+        return;
+      }
+
+      final dir = Directory(savedFolder);
+      if (!await dir.exists()) {
+        B2CloudService.log("❌ Local data folder does not exist: $savedFolder");
+        setState(() => _isSyncingBulk = false);
+        return;
+      }
+
+      B2CloudService.log("🔄 Starting bulk synchronization from: $savedFolder");
+
+      // Scans recursively to find sas1, sas2 folders inside!
+      final files = dir.listSync(recursive: true)
+          .whereType<File>()
+          .where((f) => f.path.toLowerCase().endsWith('.scb'))
+          .toList();
+
+      if (files.isEmpty) {
+        B2CloudService.log("⚠️ No .scb files found to upload in $savedFolder");
+        setState(() => _isSyncingBulk = false);
+        return;
+      }
+
+      B2CloudService.log("⏳ Found ${files.length} files. Uploading...");
+
+      int successCount = 0;
+      for (var file in files) {
+        await B2CloudService.uploadScbFile(file, "BulkSync");
+        successCount++;
+        await Future.delayed(const Duration(milliseconds: 200));
+      }
+
+      B2CloudService.log("✅ Bulk sync complete! Uploaded $successCount / ${files.length} files.");
+
+    } catch (e) {
+      B2CloudService.log("❌ Bulk sync error: $e");
+    } finally {
+      if (mounted) setState(() => _isSyncingBulk = false);
     }
   }
 
@@ -127,6 +220,13 @@ class _CloudSyncScreenState extends State<CloudSyncScreen> {
                     _buildTextField('Application Key ID (Access Key)', _accessKeyCtrl),
                     _buildTextField('Application Key (Secret Key)', _secretKeyCtrl, isObscure: true),
 
+                    const SizedBox(height: 24),
+                    const Text('Cloud Directory Structure', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue)),
+                    const SizedBox(height: 16),
+
+                    _buildTextField('Folder 1 (e.g., Region or City)', _folder1Ctrl),
+                    _buildTextField('Folder 2 (e.g., Store Name or Door)', _folder2Ctrl),
+
                     const SizedBox(height: 32),
                     Row(
                       children: [
@@ -154,7 +254,60 @@ class _CloudSyncScreenState extends State<CloudSyncScreen> {
                           ),
                         ),
                       ],
-                    )
+                    ),
+
+                    const SizedBox(height: 24),
+                    const Divider(),
+                    const SizedBox(height: 24),
+
+                    // --- NEW: LOCAL FOLDER SELECTOR ---
+                    const Text('Local Data Source (For Bulk Sync)', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue)),
+                    const SizedBox(height: 16),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: _buildTextField('Select local directory containing .scb files', _localFolderCtrl),
+                        ),
+                        const SizedBox(width: 16),
+                        SizedBox(
+                          height: 54, // Match TextField height
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.grey[200],
+                                foregroundColor: Colors.black87,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))
+                            ),
+                            onPressed: _pickLocalFolder,
+                            icon: const Icon(Icons.folder_open),
+                            label: const Text('BROWSE', style: TextStyle(fontWeight: FontWeight.bold)),
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    // --- SYNCHRONIZE ALL BUTTON ---
+                    SizedBox(
+                      width: double.infinity,
+                      height: 50,
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green[600],
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))
+                        ),
+                        onPressed: _isSyncingBulk ? null : _syncAllHistoricalData,
+                        icon: _isSyncingBulk
+                            ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                            : const Icon(Icons.cloud_upload),
+                        label: Text(
+                            _isSyncingBulk ? 'SYNCHRONIZING DATA...' : 'SYNCHRONIZE ALL HISTORICAL DATA',
+                            style: const TextStyle(fontWeight: FontWeight.bold)
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -204,7 +357,7 @@ class _CloudSyncScreenState extends State<CloudSyncScreen> {
                           if (logMsg.contains("✅")) textColor = Colors.greenAccent;
                           if (logMsg.contains("❌")) textColor = Colors.redAccent;
                           if (logMsg.contains("⚠️")) textColor = Colors.orangeAccent;
-                          if (logMsg.contains("☁️") || logMsg.contains("⏳")) textColor = Colors.lightBlueAccent;
+                          if (logMsg.contains("☁️") || logMsg.contains("⏳") || logMsg.contains("🔄") || logMsg.contains("📁")) textColor = Colors.lightBlueAccent;
 
                           return Padding(
                             padding: const EdgeInsets.only(bottom: 6),
