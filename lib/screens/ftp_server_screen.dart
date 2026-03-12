@@ -148,9 +148,9 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
     // REMOVED AUTO-FETCH: It now ONLY loads exactly what is saved.
     String savedIp = prefs.getString('ftp_ip') ?? '';
     String? savedPath = prefs.getString('saved_data_folder');
-    int savedPort = prefs.getInt('ftp_port') ?? 2121;
-    String savedUser = prefs.getString('ftp_user') ?? "camera";
-    String savedPass = prefs.getString('ftp_pass') ?? "password";
+    int savedPort = prefs.getInt('ftp_port') ?? 21;
+    String savedUser = prefs.getString('ftp_user') ?? "shopline";
+    String savedPass = prefs.getString('ftp_pass') ?? "shopline";
 
     setState(() {
       _ipController.text = savedIp;

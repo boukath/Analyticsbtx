@@ -13,7 +13,7 @@ class B2CloudService {
   static String? _bucketName;
   static bool _isEnabled = false;
 
-  // --- NEW: Auto-Sync Timer & Cache Variables ---
+  // --- Auto-Sync Timer & Cache Variables ---
   static Timer? _autoSyncTimer;
   static bool _isAutoSyncing = false;
   static Set<String> _syncedFilesCache = {};
@@ -69,20 +69,24 @@ class B2CloudService {
     }
   }
 
-  // --- NEW: The 30 Second Background Timer ---
+  // --- OPTIMIZED: The Background Timer ---
   static void _startAutoSyncTimer() {
     _autoSyncTimer?.cancel();
     if (_isEnabled) {
-      log("⏱️ Background Auto-Sync activated (Running every 30 seconds).");
-      _autoSyncTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      // CHANGED: From 15 minutes to 1 hour to maximize API cost savings!
+      // This reduces Class B API calls to just 24 per day per device.
+      log("⏱️ Background Auto-Sync activated (Running every 1 hour to optimize cloud costs).");
+
+      // Use Duration(hours: 1) to trigger the sync once an hour
+      _autoSyncTimer = Timer.periodic(const Duration(hours: 1), (_) {
         _runAutoSync();
       });
     }
   }
 
-  // --- NEW: The Auto-Sync Logic ---
+  // --- The Auto-Sync Logic ---
   static Future<void> _runAutoSync() async {
-    // Prevent overlapping if a sync takes longer than 30 seconds
+    // Prevent overlapping
     if (_isAutoSyncing || !_isEnabled || _minio == null) return;
 
     _isAutoSyncing = true;
@@ -106,7 +110,6 @@ class B2CloudService {
 
       for (var file in files) {
         // Create a unique hash based on Path + Size.
-        // If the camera adds more lines to the .scb file, the size changes, and we upload the update!
         String cacheKey = "${file.path}_${file.lengthSync()}";
 
         if (!_syncedFilesCache.contains(cacheKey)) {
@@ -115,7 +118,8 @@ class B2CloudService {
           if (success) {
             uploadedCount++;
           }
-          await Future.delayed(const Duration(milliseconds: 200)); // Prevent rate limiting
+          // OPTIMIZED: Delay of 500ms prevents B2 rate limiting when syncing multiple stores
+          await Future.delayed(const Duration(milliseconds: 500));
         }
       }
 
@@ -186,7 +190,7 @@ class B2CloudService {
 
       await _minio!.putObject(_bucketName!, objectName, stream, size: length);
 
-      // --- NEW: Save this successful upload to our smart cache ---
+      // Save this successful upload to our smart cache
       String cacheKey = "${file.path}_$length";
       _syncedFilesCache.add(cacheKey);
       await prefs.setStringList('b2_synced_files_cache', _syncedFilesCache.toList());

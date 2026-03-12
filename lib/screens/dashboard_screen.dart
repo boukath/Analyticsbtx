@@ -45,12 +45,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String _expectedIp = "";
   String _actualIp = "";
 
-  // --- Aggressive Alert Variables ---
   bool _isAlertSilenced = false;
   bool _isAlertDialogOpen = false;
 
-  // --- NEW: Language State ---
+  // --- Language State ---
   bool _isFrench = false;
+
+  // --- NEW: OPERATING HOURS STATE (Stored in Total Minutes from Midnight) ---
+  int _workingMinuteStart = 0;    // Default: 00:00 (0 mins)
+  int _workingMinuteEnd = 1439;   // Default: 23:59 (1439 mins)
 
   List<String> _availableCameras = ['All Doors'];
   String _selectedCamera = 'All Doors';
@@ -80,10 +83,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   final FolderScannerService _scannerService = FolderScannerService();
 
+  // --- PREMIUM THEME COLORS ---
+  final Color _bgDark = const Color(0xFF0F172A); // Slate 900
+  final Color _cardDark = const Color(0xFF1E293B); // Slate 800
+  final Color _accentCyan = const Color(0xFF06B6D4); // Neon Cyan for IN / Active
+  final Color _accentMagenta = const Color(0xFFD946EF); // Neon Magenta for OUT
+  final Color _accentGrey = const Color(0xFF64748B); // Slate 500 for Comparisons
+
   @override
   void initState() {
     super.initState();
-    _loadLanguagePref(); // Load language preference on startup
+    _loadLanguagePref();
+    _loadWorkingHoursPref(); // Load custom working hours
     _loadStoreProfile();
     _loadPosDatabase();
     _loadSavedFolder();
@@ -99,7 +110,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
     super.dispose();
   }
 
-  // --- NEW: Load & Save Language Preferences ---
+  // --- Load Working Hours ---
+  Future<void> _loadWorkingHoursPref() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _workingMinuteStart = prefs.getInt('working_minute_start') ?? 0;
+      _workingMinuteEnd = prefs.getInt('working_minute_end') ?? 1439;
+    });
+  }
+
+  // --- Load & Save Language Preferences ---
   Future<void> _loadLanguagePref() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
@@ -114,32 +134,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
     await prefs.setString('app_language', _isFrench ? 'fr' : 'en');
 
-    // Show a small beautiful alert
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              _isFrench ? 'Langue changée en Français (Redémarrez l\'application pour appliquer partout)'
-                  : 'Language changed to English (Restart app to apply everywhere)',
-              style: const TextStyle(fontWeight: FontWeight.bold),
+              _isFrench ? 'Langue changée en Français' : 'Language changed to English',
+              style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
             ),
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-            backgroundColor: const Color(0xFF1E293B),
-            duration: const Duration(seconds: 3),
+            backgroundColor: _accentCyan,
+            duration: const Duration(seconds: 2),
           )
       );
     }
   }
 
-  // --- Security Monitor with Aggressive Alert ---
+  // --- Security Monitor ---
   void _startSecurityMonitor() {
     _securityTimer = Timer.periodic(const Duration(seconds: 10), (timer) async {
       final prefs = await SharedPreferences.getInstance();
       String savedIp = prefs.getString('ftp_ip') ?? '';
-
-      if (savedIp.isEmpty) return; // Ignore if no IP is configured yet
-
+      if (savedIp.isEmpty) return;
       String currentIp = await FtpService.getLocalIpAddress();
 
       if (mounted) {
@@ -149,14 +165,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
           _isIpMismatch = (currentIp != savedIp);
         });
 
-        // If the IP is correct, reset the silence flag so it can alert again if it breaks later
         if (!_isIpMismatch) {
           _isAlertSilenced = false;
         }
 
-        int totalVisitors = _totalIn + _totalOut; // Check if "comptage is still 0"
-
-        // TRIGGER CONDITION: IP is wrong AND Comptage is 0 AND Not silenced AND Dialog isn't already open
+        int totalVisitors = _totalIn + _totalOut;
         if (_isIpMismatch && totalVisitors == 0 && !_isAlertSilenced && !_isAlertDialogOpen) {
           _showPasswordAlertDialog();
         }
@@ -172,18 +185,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     showDialog(
       context: context,
-      barrierDismissible: false, // Forces interaction! They cannot click outside to close it.
+      barrierDismissible: false,
       builder: (BuildContext c) {
         return StatefulBuilder(
             builder: (context, setDialogState) {
               return AlertDialog(
-                backgroundColor: const Color(0xFF1E293B),
+                backgroundColor: _cardDark,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: const BorderSide(color: Colors.redAccent, width: 2)),
-                title: const Row(
+                title: Row(
                   children: [
-                    Icon(Icons.warning_amber_rounded, color: Colors.redAccent, size: 32),
-                    SizedBox(width: 12),
-                    Text("CRITICAL NETWORK ERROR", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                    const Icon(Icons.warning_amber_rounded, color: Colors.redAccent, size: 32),
+                    const SizedBox(width: 12),
+                    Text(
+                        _isFrench ? "ERREUR RÉSEAU CRITIQUE" : "CRITICAL NETWORK ERROR",
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)
+                    ),
                   ],
                 ),
                 content: Column(
@@ -191,10 +207,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      "The PC's IP Address has changed and NO TRAFFIC (0) is being recorded!\n\n"
-                          "Expected IP: $_expectedIp\n"
-                          "Current IP: ${_actualIp == '127.0.0.1' ? 'DISCONNECTED' : _actualIp}\n\n"
-                          "Please fix the network immediately, or enter the technician password to silence this alert.",
+                      _isFrench
+                          ? "L'adresse IP du PC a changé et AUCUN TRAFIC (0) n'est enregistré !\n\nIP Attendue: $_expectedIp\nIP Actuelle: ${_actualIp == '127.0.0.1' ? 'DÉCONNECTÉ' : _actualIp}\n\nVeuillez réparer le réseau immédiatement, ou entrez le mot de passe technicien pour désactiver cette alerte."
+                          : "The PC's IP Address has changed and NO TRAFFIC (0) is being recorded!\n\nExpected IP: $_expectedIp\nCurrent IP: ${_actualIp == '127.0.0.1' ? 'DISCONNECTED' : _actualIp}\n\nPlease fix the network immediately, or enter the technician password to silence this alert.",
                       style: const TextStyle(color: Colors.white70, fontSize: 16, height: 1.5),
                     ),
                     const SizedBox(height: 20),
@@ -203,11 +218,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       obscureText: true,
                       style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                       decoration: InputDecoration(
-                        labelText: 'Technician Password',
+                        labelText: _isFrench ? 'Mot de passe technicien' : 'Technician Password',
                         labelStyle: const TextStyle(color: Colors.white54),
                         filled: true,
-                        fillColor: Colors.black45,
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                        fillColor: _bgDark,
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
                         errorText: errorMessage.isNotEmpty ? errorMessage : null,
                       ),
                     ),
@@ -220,7 +235,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       Navigator.of(c).pop();
                       Navigator.push(context, MaterialPageRoute(builder: (context) => const FtpServerScreen()));
                     },
-                    child: const Text("FIX NETWORK", style: TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold, letterSpacing: 1)),
+                    child: Text(
+                        _isFrench ? "RÉPARER LE RÉSEAU" : "FIX NETWORK",
+                        style: const TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold, letterSpacing: 1)
+                    ),
                   ),
                   ElevatedButton(
                     style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent, foregroundColor: Colors.white),
@@ -231,11 +249,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         Navigator.of(c).pop();
                       } else {
                         setDialogState(() {
-                          errorMessage = "Incorrect Password!";
+                          errorMessage = _isFrench ? "Mot de passe incorrect !" : "Incorrect Password!";
                         });
                       }
                     },
-                    child: const Text("SILENCE ALERT", style: TextStyle(fontWeight: FontWeight.bold)),
+                    child: Text(
+                        _isFrench ? "SILENCIEUX" : "SILENCE ALERT",
+                        style: const TextStyle(fontWeight: FontWeight.bold)
+                    ),
                   ),
                 ],
               );
@@ -243,7 +264,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         );
       },
     ).then((_) {
-      _isAlertDialogOpen = false; // Reset if it somehow closes
+      _isAlertDialogOpen = false;
     });
   }
 
@@ -382,6 +403,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
     setState(() {
       List<PeopleCount> filteredData = _rawData.where((item) {
         if (_selectedCamera != 'All Doors' && item.doorName != _selectedCamera) return false;
+
+        // --- NEW: EXACT MINUTE OPERATING HOURS FILTER ---
+        var timeParts = item.time.split(':');
+        int hour = timeParts.isNotEmpty ? (int.tryParse(timeParts[0]) ?? 0) : 0;
+        int minute = timeParts.length > 1 ? (int.tryParse(timeParts[1]) ?? 0) : 0;
+        int totalMinutes = (hour * 60) + minute;
+
+        if (totalMinutes < _workingMinuteStart || totalMinutes > _workingMinuteEnd) return false;
+        // ------------------------------------------------
+
         if (_selectedDateRange == null) return true;
         var dateParts = item.date.split('/');
         if (dateParts.length != 3) return true;
@@ -409,6 +440,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
         List<PeopleCount> compareFilteredData = _rawData.where((item) {
           if (_selectedCamera != 'All Doors' && item.doorName != _selectedCamera) return false;
+
+          // --- EXACT MINUTE OPERATING HOURS FILTER (For Compare Mode) ---
+          var timeParts = item.time.split(':');
+          int hour = timeParts.isNotEmpty ? (int.tryParse(timeParts[0]) ?? 0) : 0;
+          int minute = timeParts.length > 1 ? (int.tryParse(timeParts[1]) ?? 0) : 0;
+          int totalMinutes = (hour * 60) + minute;
+
+          if (totalMinutes < _workingMinuteStart || totalMinutes > _workingMinuteEnd) return false;
+          // --------------------------------------------------------------
+
           var dateParts = item.date.split('/');
           if (dateParts.length != 3) return true;
           int day = int.parse(dateParts[0]), month = int.parse(dateParts[1]), year = int.parse(dateParts[2]);
@@ -433,7 +474,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> _pickDateRange() async {
     DateTimeRange? pickedRange = await showDateRangePicker(
       context: context, firstDate: DateTime(2020), lastDate: DateTime.now().add(const Duration(days: 3650)), initialDateRange: _selectedDateRange,
-      builder: (context, child) => Theme(data: ThemeData.light().copyWith(colorScheme: ColorScheme.light(primary: Colors.blue[700]!, onPrimary: Colors.white, surface: Colors.white)), child: child!),
+      builder: (context, child) => Theme(
+          data: ThemeData.dark().copyWith(
+            colorScheme: ColorScheme.dark(primary: _accentCyan, onPrimary: Colors.white, surface: _cardDark, onSurface: Colors.white),
+            dialogBackgroundColor: _cardDark,
+          ),
+          child: child!
+      ),
     );
     if (pickedRange != null) { setState(() { _selectedDateRange = pickedRange; _applyFilter(); }); }
   }
@@ -447,14 +494,153 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   String _getFormattedDateString() {
-    if (_selectedDateRange == null) return "All Time";
-    const List<String> months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    if (_selectedDateRange == null) return _isFrench ? "De tout temps" : "All Time";
+
+    List<String> monthsEn = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    List<String> monthsFr = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc'];
+    List<String> months = _isFrench ? monthsFr : monthsEn;
+
     DateTime start = _selectedDateRange!.start, end = _selectedDateRange!.end;
     if (start.isAtSameMomentAs(end) || end.difference(start).inDays == 0) return "${months[start.month - 1]} ${start.day}, ${start.year}";
     return "${months[start.month - 1]} ${start.day} - ${months[end.month - 1]} ${end.day}";
   }
 
   String _formatDateOnly(DateTime d) => "${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
+
+  // Helper formatting total minutes back to HH:MM strings
+  String _formatMinutesToTimeString(int totalMinutes) {
+    int h = totalMinutes ~/ 60;
+    int m = totalMinutes % 60;
+    return "${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}";
+  }
+
+  // --- NEW: THE PREMIUM TIME PICKER DIALOG ---
+  void _showWorkingHoursDialog() {
+    TimeOfDay startTime = TimeOfDay(hour: _workingMinuteStart ~/ 60, minute: _workingMinuteStart % 60);
+    TimeOfDay endTime = TimeOfDay(hour: _workingMinuteEnd ~/ 60, minute: _workingMinuteEnd % 60);
+
+    showDialog(
+        context: context,
+        builder: (context) {
+          return StatefulBuilder(
+              builder: (context, setDialogState) {
+
+                // Reusable widget for selecting time
+                Widget _buildTimeButton(String label, TimeOfDay time, bool isStart) {
+                  return Expanded(
+                    child: InkWell(
+                      onTap: () async {
+                        TimeOfDay? picked = await showTimePicker(
+                          context: context,
+                          initialTime: time,
+                          builder: (context, child) => Theme(
+                            data: ThemeData.dark().copyWith(
+                              colorScheme: ColorScheme.dark(primary: _accentCyan, surface: _bgDark, onSurface: Colors.white),
+                            ),
+                            child: child!,
+                          ),
+                        );
+                        if (picked != null) {
+                          setDialogState(() {
+                            if (isStart) startTime = picked;
+                            else endTime = picked;
+                          });
+                        }
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 20),
+                        decoration: BoxDecoration(
+                          color: _bgDark,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.white.withOpacity(0.1)),
+                        ),
+                        child: Column(
+                          children: [
+                            Text(label, style: const TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1)),
+                            const SizedBox(height: 8),
+                            Text(
+                                "${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}",
+                                style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900)
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                }
+
+                return AlertDialog(
+                  backgroundColor: _cardDark,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: BorderSide(color: Colors.white.withOpacity(0.05))),
+                  title: Row(
+                    children: [
+                      Icon(Icons.access_time, color: _accentCyan),
+                      const SizedBox(width: 12),
+                      Text(_isFrench ? "Heures d'Ouverture" : "Operating Hours", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                  content: SizedBox(
+                    width: 400,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          _isFrench
+                              ? "Filtrez les données au niveau de la minute exacte pour exclure le personnel de nettoyage ou les mouvements en dehors des heures de travail."
+                              : "Filter data down to the exact minute to exclude cleaning staff or movements outside of business hours.",
+                          style: const TextStyle(color: Colors.white54, fontSize: 14),
+                        ),
+                        const SizedBox(height: 32),
+                        Row(
+                          children: [
+                            _buildTimeButton(_isFrench ? "OUVERTURE" : "OPENING", startTime, true),
+                            const Padding(
+                              padding: EdgeInsets.symmetric(horizontal: 16),
+                              child: Icon(Icons.arrow_forward_rounded, color: Colors.white38),
+                            ),
+                            _buildTimeButton(_isFrench ? "FERMETURE" : "CLOSING", endTime, false),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: Text(_isFrench ? "ANNULER" : "CANCEL", style: const TextStyle(color: Colors.white54)),
+                    ),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(backgroundColor: _accentCyan, foregroundColor: Colors.black),
+                      onPressed: () async {
+                        int startMins = startTime.hour * 60 + startTime.minute;
+                        int endMins = endTime.hour * 60 + endTime.minute;
+
+                        // Validation check
+                        if (startMins >= endMins) {
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_isFrench ? "L'heure de fin doit être après l'heure de début." : "Closing time must be after opening time."), backgroundColor: Colors.redAccent));
+                          return;
+                        }
+
+                        final prefs = await SharedPreferences.getInstance();
+                        await prefs.setInt('working_minute_start', startMins);
+                        await prefs.setInt('working_minute_end', endMins);
+
+                        setState(() {
+                          _workingMinuteStart = startMins;
+                          _workingMinuteEnd = endMins;
+                          _applyFilter();
+                        });
+                        Navigator.pop(context);
+                      },
+                      child: Text(_isFrench ? "APPLIQUER" : "APPLY FILTER", style: const TextStyle(fontWeight: FontWeight.bold)),
+                    )
+                  ],
+                );
+              }
+          );
+        }
+    );
+  }
 
   Widget _buildTrendBadge(num current, num previous) {
     if (!_isCompareMode) return const SizedBox.shrink();
@@ -467,15 +653,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
         margin: const EdgeInsets.only(top: 8),
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         decoration: BoxDecoration(
-            color: isPositive ? Colors.green.withOpacity(0.1) : Colors.red.withOpacity(0.1),
+            color: isPositive ? Colors.greenAccent.withOpacity(0.15) : Colors.redAccent.withOpacity(0.15),
             borderRadius: BorderRadius.circular(20)
         ),
         child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(isPositive ? Icons.trending_up : Icons.trending_down, size: 14, color: isPositive ? Colors.green[700] : Colors.red[700]),
+              Icon(isPositive ? Icons.trending_up : Icons.trending_down, size: 14, color: isPositive ? Colors.greenAccent : Colors.redAccent),
               const SizedBox(width: 4),
-              Text('${change.abs().toStringAsFixed(1)}%', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: isPositive ? Colors.green[700] : Colors.red[700])),
+              Text('${change.abs().toStringAsFixed(1)}%', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: isPositive ? Colors.greenAccent : Colors.redAccent)),
             ]
         )
     );
@@ -492,9 +678,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
           return StatefulBuilder(
               builder: (context, setDialogState) {
                 return AlertDialog(
-                  backgroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                  title: const Text('Store Profile Settings', style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold)),
+                  backgroundColor: _cardDark,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: BorderSide(color: Colors.white.withOpacity(0.05))),
+                  title: Text(
+                      _isFrench ? 'Paramètres du Profil' : 'Store Profile Settings',
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)
+                  ),
                   content: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -508,46 +697,51 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         child: Container(
                           width: 80, height: 80,
                           decoration: BoxDecoration(
-                            color: Colors.grey[200],
+                            color: _bgDark,
                             shape: BoxShape.circle,
-                            border: Border.all(color: Colors.grey[300]!, width: 2),
+                            border: Border.all(color: _accentCyan, width: 2),
                             image: tempLogoPath != null ? DecorationImage(image: FileImage(File(tempLogoPath!)), fit: BoxFit.cover) : null,
                           ),
-                          child: tempLogoPath == null ? Icon(Icons.add_a_photo, color: Colors.blue[700], size: 30) : null,
+                          child: tempLogoPath == null ? Icon(Icons.add_a_photo, color: _accentCyan, size: 30) : null,
                         ),
                       ),
                       const SizedBox(height: 8),
-                      const Text('Tap to change logo', style: TextStyle(color: Colors.black54, fontSize: 12)),
+                      Text(_isFrench ? 'Appuyez pour changer le logo' : 'Tap to change logo', style: const TextStyle(color: Colors.white54, fontSize: 12)),
                       const SizedBox(height: 24),
 
                       TextField(
                         controller: nameCtrl,
-                        style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.bold),
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                         decoration: InputDecoration(
-                          labelText: 'Store / Brand Name',
-                          filled: true, fillColor: Colors.grey[100],
+                          labelText: _isFrench ? 'Nom du Magasin / Marque' : 'Store / Brand Name',
+                          labelStyle: const TextStyle(color: Colors.white54),
+                          filled: true, fillColor: _bgDark,
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
-                          prefixIcon: Icon(Icons.storefront, color: Colors.blue[600]),
+                          prefixIcon: Icon(Icons.storefront, color: _accentCyan),
                         ),
                       ),
                       const SizedBox(height: 12),
 
                       TextField(
                         controller: locCtrl,
-                        style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.bold),
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                         decoration: InputDecoration(
-                          labelText: 'Location (e.g. Branch, City)',
-                          filled: true, fillColor: Colors.grey[100],
+                          labelText: _isFrench ? 'Emplacement (ex: Ville)' : 'Location (e.g. City)',
+                          labelStyle: const TextStyle(color: Colors.white54),
+                          filled: true, fillColor: _bgDark,
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
-                          prefixIcon: Icon(Icons.location_on, color: Colors.pink[500]),
+                          prefixIcon: Icon(Icons.location_on, color: _accentMagenta),
                         ),
                       ),
                     ],
                   ),
                   actions: [
-                    TextButton(onPressed: () => Navigator.pop(context), child: const Text('CANCEL', style: TextStyle(color: Colors.black54))),
+                    TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: Text(_isFrench ? 'ANNULER' : 'CANCEL', style: const TextStyle(color: Colors.white54))
+                    ),
                     ElevatedButton(
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[700], foregroundColor: Colors.white),
+                      style: ElevatedButton.styleFrom(backgroundColor: _accentCyan, foregroundColor: Colors.black),
                       onPressed: () async {
                         final prefs = await SharedPreferences.getInstance();
                         await prefs.setString('store_name', nameCtrl.text);
@@ -561,7 +755,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         });
                         Navigator.pop(context);
                       },
-                      child: const Text('SAVE SETTINGS', style: TextStyle(fontWeight: FontWeight.bold)),
+                      child: Text(_isFrench ? 'ENREGISTRER' : 'SAVE SETTINGS', style: const TextStyle(fontWeight: FontWeight.bold)),
                     ),
                   ],
                 );
@@ -581,27 +775,35 @@ class _DashboardScreenState extends State<DashboardScreen> {
     showDialog(
         context: context,
         builder: (context) => AlertDialog(
-          backgroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Column(children: [ Icon(Icons.point_of_sale, color: Colors.orange[600], size: 40), const SizedBox(height: 8), const Text('ENTER DAILY POS DATA', style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 16)), Text('Date: ${_getFormattedDateString()}', style: const TextStyle(color: Colors.black54, fontSize: 12)) ]),
+          backgroundColor: _cardDark, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: BorderSide(color: Colors.white.withOpacity(0.05))),
+          title: Column(children: [
+            const Icon(Icons.point_of_sale, color: Colors.greenAccent, size: 40),
+            const SizedBox(height: 8),
+            Text(_isFrench ? 'SAISIR LES DONNÉES DE CAISSE' : 'ENTER DAILY POS DATA', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+            Text('${_isFrench ? "Date : " : "Date: "}${_getFormattedDateString()}', style: const TextStyle(color: Colors.white54, fontSize: 12))
+          ]),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              TextField(controller: caCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: InputDecoration(labelText: 'Revenue (DZD)', filled: true, fillColor: Colors.grey[100], border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none), prefixIcon: Icon(Icons.payments, color: Colors.orange[600]))),
+              TextField(controller: caCtrl, style: const TextStyle(color: Colors.white), keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: InputDecoration(labelText: _isFrench ? 'Chiffre d\'Affaires (DZD)' : 'Revenue (DZD)', labelStyle: const TextStyle(color: Colors.white54), filled: true, fillColor: _bgDark, border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none), prefixIcon: const Icon(Icons.payments, color: Colors.greenAccent))),
               const SizedBox(height: 12),
-              TextField(controller: clientCtrl, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: 'Total Clients', filled: true, fillColor: Colors.grey[100], border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none), prefixIcon: Icon(Icons.receipt_long, color: Colors.blue[600]))),
+              TextField(controller: clientCtrl, style: const TextStyle(color: Colors.white), keyboardType: TextInputType.number, decoration: InputDecoration(labelText: _isFrench ? 'Total Clients' : 'Total Clients', labelStyle: const TextStyle(color: Colors.white54), filled: true, fillColor: _bgDark, border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none), prefixIcon: Icon(Icons.receipt_long, color: _accentCyan))),
               const SizedBox(height: 12),
-              TextField(controller: articleCtrl, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: 'Articles Sold', filled: true, fillColor: Colors.grey[100], border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none), prefixIcon: Icon(Icons.shopping_bag, color: Colors.pink[500]))),
+              TextField(controller: articleCtrl, style: const TextStyle(color: Colors.white), keyboardType: TextInputType.number, decoration: InputDecoration(labelText: _isFrench ? 'Articles Vendus' : 'Articles Sold', labelStyle: const TextStyle(color: Colors.white54), filled: true, fillColor: _bgDark, border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none), prefixIcon: Icon(Icons.shopping_bag, color: _accentMagenta))),
             ],
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('CANCEL', style: TextStyle(color: Colors.black54))),
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text(_isFrench ? 'ANNULER' : 'CANCEL', style: const TextStyle(color: Colors.white54))
+            ),
             ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.orange[600], foregroundColor: Colors.white),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.greenAccent, foregroundColor: Colors.black),
               onPressed: () {
                 _savePosData(dateStr, double.tryParse(caCtrl.text) ?? 0.0, int.tryParse(clientCtrl.text) ?? 0, int.tryParse(articleCtrl.text) ?? 0);
                 Navigator.pop(context);
               },
-              child: const Text('SAVE DATA', style: TextStyle(fontWeight: FontWeight.bold)),
+              child: Text(_isFrench ? 'ENREGISTRER' : 'SAVE DATA', style: const TextStyle(fontWeight: FontWeight.bold)),
             ),
           ],
         )
@@ -613,7 +815,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     String eCam = _selectedCamera; ChartFilter eFilt = _currentFilter;
 
     showModalBottomSheet(
-        context: context, isScrollControlled: true, backgroundColor: Colors.white, shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+        context: context, isScrollControlled: true, backgroundColor: _cardDark, shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
         builder: (context) => StatefulBuilder(
             builder: (context, setModalState) {
               void applyPreset(String type) {
@@ -623,15 +825,38 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 else if (type == 'Monthly') { start = DateTime(ref.year, ref.month - 1, ref.day); eFilt = ChartFilter.daily; }
                 setModalState(() => eRange = DateTimeRange(start: start, end: ref));
               }
+
+              String getTranslatedPreset(String p) {
+                if (!_isFrench) return p;
+                if (p == 'Daily') return 'Quotidien';
+                if (p == 'Weekly') return 'Hebdomadaire';
+                if (p == 'Monthly') return 'Mensuel';
+                return p;
+              }
+
               return Padding(
                 padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom, left: 24, right: 24, top: 24),
                 child: Column(
                   mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('EXPORT SETTINGS', style: TextStyle(color: Colors.blue[700], fontSize: 18, fontWeight: FontWeight.bold)), const SizedBox(height: 24),
-                    SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: ['Daily', 'Weekly', 'Monthly'].map((p) => Padding(padding: const EdgeInsets.only(right: 8.0), child: OutlinedButton(onPressed: () => applyPreset(p), child: Text(p)))).toList())), const SizedBox(height: 20),
-                    InkWell(onTap: () async { DateTimeRange? picked = await showDateRangePicker(context: context, firstDate: DateTime(2020), lastDate: DateTime.now().add(const Duration(days: 3650)), initialDateRange: eRange); if (picked != null) setModalState(() => eRange = picked); }, child: Container(padding: const EdgeInsets.all(14), decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(8)), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text("${_formatDateOnly(eRange.start)}   →   ${_formatDateOnly(eRange.end)}", style: const TextStyle(fontWeight: FontWeight.bold)), Icon(Icons.edit_calendar, color: Colors.blue[700])]))), const SizedBox(height: 20),
-                    Row(children: [ Expanded(child: ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[600], foregroundColor: Colors.white), icon: const Icon(Icons.picture_as_pdf), label: const Text('SAVE PDF'), onPressed: () { Navigator.pop(context); _generateCustomReport(eCam, eRange, eFilt, format: 'pdf'); })), const SizedBox(width: 16), Expanded(child: ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: Colors.green[600], foregroundColor: Colors.white), icon: const Icon(Icons.table_chart), label: const Text('SAVE CSV'), onPressed: () { Navigator.pop(context); _generateCustomReport(eCam, eRange, eFilt, format: 'csv'); }))]), const SizedBox(height: 32),
+                    Text(_isFrench ? 'PARAMÈTRES D\'EXPORTATION' : 'EXPORT SETTINGS', style: TextStyle(color: _accentCyan, fontSize: 18, fontWeight: FontWeight.bold)), const SizedBox(height: 24),
+                    SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: ['Daily', 'Weekly', 'Monthly'].map((p) => Padding(padding: const EdgeInsets.only(right: 8.0), child: OutlinedButton(style: OutlinedButton.styleFrom(foregroundColor: Colors.white, side: BorderSide(color: Colors.white.withOpacity(0.2))), onPressed: () => applyPreset(p), child: Text(getTranslatedPreset(p))))).toList())), const SizedBox(height: 20),
+                    InkWell(
+                        onTap: () async {
+                          DateTimeRange? picked = await showDateRangePicker(context: context, firstDate: DateTime(2020), lastDate: DateTime.now().add(const Duration(days: 3650)), initialDateRange: eRange, builder: (context, child) => Theme(data: ThemeData.dark().copyWith(colorScheme: ColorScheme.dark(primary: _accentCyan, surface: _cardDark)), child: child!));
+                          if (picked != null) setModalState(() => eRange = picked);
+                        },
+                        child: Container(
+                            padding: const EdgeInsets.all(14), decoration: BoxDecoration(color: _bgDark, borderRadius: BorderRadius.circular(8)),
+                            child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text("${_formatDateOnly(eRange.start)}   →   ${_formatDateOnly(eRange.end)}", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)), Icon(Icons.edit_calendar, color: _accentCyan)])
+                        )
+                    ),
+                    const SizedBox(height: 20),
+                    Row(children: [
+                      Expanded(child: ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: _accentCyan, foregroundColor: Colors.black), icon: const Icon(Icons.picture_as_pdf), label: Text(_isFrench ? 'ENREGISTRER PDF' : 'SAVE PDF', style: const TextStyle(fontWeight: FontWeight.bold)), onPressed: () { Navigator.pop(context); _generateCustomReport(eCam, eRange, eFilt, format: 'pdf'); })),
+                      const SizedBox(width: 16),
+                      Expanded(child: ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: Colors.greenAccent, foregroundColor: Colors.black), icon: const Icon(Icons.table_chart), label: Text(_isFrench ? 'ENREGISTRER CSV' : 'SAVE CSV', style: const TextStyle(fontWeight: FontWeight.bold)), onPressed: () { Navigator.pop(context); _generateCustomReport(eCam, eRange, eFilt, format: 'csv'); }))
+                    ]), const SizedBox(height: 32),
                   ],
                 ),
               );
@@ -656,7 +881,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  // --- NEW: The iOS 26 Style Animated Language Toggle ---
+  // --- The iOS 26 Style Animated Language Toggle ---
   Widget _buildLanguageToggle() {
     return GestureDetector(
       onTap: _toggleLanguage,
@@ -666,39 +891,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
         height: 44,
         padding: const EdgeInsets.all(4),
         decoration: BoxDecoration(
-          color: Colors.grey[200], // Smooth, subtle background like iOS segmented controls
+          color: _cardDark,
           borderRadius: BorderRadius.circular(30),
-          border: Border.all(color: Colors.black.withOpacity(0.05), width: 1),
+          border: Border.all(color: Colors.white.withOpacity(0.1), width: 1),
         ),
         child: Stack(
           children: [
-            // The moving "pill" thumb inside the toggle
             AnimatedAlign(
               duration: const Duration(milliseconds: 400),
-              curve: Curves.easeOutBack, // Gives that classic bouncy iOS physics
+              curve: Curves.easeOutBack,
               alignment: _isFrench ? Alignment.centerRight : Alignment.centerLeft,
               child: Container(
                 width: 46,
                 height: 36,
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: _bgDark,
                   borderRadius: BorderRadius.circular(20),
                   boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
-                      blurRadius: 6,
-                      offset: const Offset(0, 3),
-                    ),
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.05),
-                      blurRadius: 1,
-                      offset: const Offset(0, 1),
-                    )
+                    BoxShadow(color: Colors.black.withOpacity(0.3), blurRadius: 4, offset: const Offset(0, 2)),
                   ],
                 ),
               ),
             ),
-            // The EN / FR text layout
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
@@ -707,10 +921,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     child: AnimatedDefaultTextStyle(
                       duration: const Duration(milliseconds: 200),
                       style: TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 14,
-                        letterSpacing: 1,
-                        color: !_isFrench ? Colors.blue[700] : Colors.black45,
+                        fontWeight: FontWeight.w800, fontSize: 14, letterSpacing: 1,
+                        color: !_isFrench ? _accentCyan : Colors.white38,
                       ),
                       child: const Text('EN'),
                     ),
@@ -721,10 +933,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     child: AnimatedDefaultTextStyle(
                       duration: const Duration(milliseconds: 200),
                       style: TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 14,
-                        letterSpacing: 1,
-                        color: _isFrench ? Colors.blue[700] : Colors.black45,
+                        fontWeight: FontWeight.w800, fontSize: 14, letterSpacing: 1,
+                        color: _isFrench ? _accentCyan : Colors.white38,
                       ),
                       child: const Text('FR'),
                     ),
@@ -743,7 +953,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final isDesktop = MediaQuery.of(context).size.width > 800;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF3F4F6),
+      backgroundColor: _bgDark, // PREMIUM DARK BACKGROUND
       body: Row(
         children: [
           if (isDesktop) _buildSidebar(),
@@ -766,7 +976,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         const SizedBox(width: 16),
                         Expanded(
                           child: Text(
-                            "CRITICAL: Network IP Changed! Expected: $_expectedIp | Current: ${_actualIp == '127.0.0.1' ? 'DISCONNECTED' : _actualIp}. Cameras are currently blind.",
+                            _isFrench
+                                ? "CRITIQUE : L'IP du réseau a changé ! Attendu : $_expectedIp | Actuel : ${_actualIp == '127.0.0.1' ? 'DÉCONNECTÉ' : _actualIp}. Les caméras sont aveugles."
+                                : "CRITICAL: Network IP Changed! Expected: $_expectedIp | Current: ${_actualIp == '127.0.0.1' ? 'DISCONNECTED' : _actualIp}. Cameras are currently blind.",
                             style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
                           ),
                         ),
@@ -775,7 +987,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           onPressed: () {
                             Navigator.push(context, MaterialPageRoute(builder: (context) => const FtpServerScreen()));
                           },
-                          child: const Text("FIX NETWORK", style: TextStyle(fontWeight: FontWeight.bold)),
+                          child: Text(_isFrench ? "RÉPARER" : "FIX NETWORK", style: const TextStyle(fontWeight: FontWeight.bold)),
                         )
                       ],
                     ),
@@ -783,23 +995,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
                 Expanded(
                   child: _isLoading
-                      ? Center(child: CircularProgressIndicator(color: Colors.blue[700]))
+                      ? Center(child: CircularProgressIndicator(color: _accentCyan))
                       : SingleChildScrollView(
                     padding: const EdgeInsets.all(32.0),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         _buildPageHeader(),
-                        const SizedBox(height: 32),
+                        const SizedBox(height: 24),
 
                         if (_rawData.isEmpty)
                           _buildEmptyState()
                         else ...[
-                          _buildTrafficSummaryCards(isDesktop),
+                          _buildSmartInsights(),
                           const SizedBox(height: 24),
-                          _buildBusinessPerformanceCards(isDesktop),
+                          _buildHeroChart(),
                           const SizedBox(height: 32),
-                          _buildInteractiveChartSection(),
+                          _buildZoneSelector(),
+                          const SizedBox(height: 32),
+                          _buildBentoGrid(isDesktop),
+                          const SizedBox(height: 40),
                         ]
                       ],
                     ),
@@ -816,26 +1031,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _buildSidebar() {
     return Container(
       width: 260,
-      color: const Color(0xFF1E293B),
+      color: _cardDark, // Premium Slate 800
       child: Column(
         children: [
           const SizedBox(height: 40),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.analytics, color: Colors.blue[400], size: 32),
+              Icon(Icons.analytics, color: _accentCyan, size: 32),
               const SizedBox(width: 12),
-              const Text('Analytics', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: Colors.white)),
+              Text(_isFrench ? 'Analytique' : 'Analytics', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: -0.5)),
             ],
           ),
           const SizedBox(height: 60),
 
-          _buildSidebarItem(Icons.dashboard, 'Dashboard', isActive: true),
-          _buildSidebarItem(Icons.source, 'Data Source', onTap: _pickFolderAndLoadData),
+          _buildSidebarItem(Icons.dashboard, _isFrench ? 'Tableau de bord' : 'Dashboard', isActive: true),
+          _buildSidebarItem(Icons.source, _isFrench ? 'Source de données' : 'Data Source', onTap: _pickFolderAndLoadData),
 
           _buildSidebarItem(
               Icons.wifi_tethering,
-              'FTP Server',
+              _isFrench ? 'Serveur FTP' : 'FTP Server',
               iconColor: _isIpMismatch ? Colors.redAccent : null,
               textColor: _isIpMismatch ? Colors.redAccent : null,
               onTap: () async {
@@ -844,23 +1059,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
               }
           ),
 
-          _buildSidebarItem(Icons.cloud_upload, 'Cloud Sync (B2)', onTap: () {
+          _buildSidebarItem(Icons.cloud_upload, _isFrench ? 'Synchronisation Cloud' : 'Cloud Sync (B2)', onTap: () {
             Navigator.push(context, MaterialPageRoute(builder: (context) => const CloudSyncScreen()));
           }),
 
-          _buildSidebarItem(Icons.point_of_sale, 'POS Entry', onTap: _rawData.isNotEmpty ? _showPosEntryDialog : null),
-          _buildSidebarItem(Icons.download, 'Export Reports', onTap: _rawData.isNotEmpty ? _showExportMenu : null),
+          _buildSidebarItem(Icons.point_of_sale, _isFrench ? 'Saisie de Caisse' : 'POS Entry', onTap: _rawData.isNotEmpty ? _showPosEntryDialog : null),
+          _buildSidebarItem(Icons.download, _isFrench ? 'Exporter Rapports' : 'Export Reports', onTap: _rawData.isNotEmpty ? _showExportMenu : null),
 
           const Spacer(),
           if (_isFtpRunning && !_isIpMismatch)
             Container(
               margin: const EdgeInsets.all(24),
               padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(color: Colors.green.withOpacity(0.1), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.green.withOpacity(0.3))),
+              decoration: BoxDecoration(color: Colors.greenAccent.withOpacity(0.1), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.greenAccent.withOpacity(0.3))),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(children: [Icon(Icons.circle, color: Colors.green[400], size: 12), const SizedBox(width: 8), const Text('FTP Active', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white))]),
+                  Row(children: [Icon(Icons.circle, color: Colors.greenAccent, size: 12), const SizedBox(width: 8), Text(_isFrench ? 'FTP Actif' : 'FTP Active', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white))]),
                   const SizedBox(height: 8),
                   Text('ftp://$_localIp:2121', style: const TextStyle(fontSize: 12, color: Colors.white70)),
                 ],
@@ -873,8 +1088,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _buildSidebarItem(IconData icon, String title, {bool isActive = false, Color? iconColor, Color? textColor, VoidCallback? onTap}) {
     return ListTile(
-      leading: Icon(icon, color: iconColor ?? (isActive ? Colors.blue[400] : Colors.white54)),
-      title: Text(title, style: TextStyle(color: textColor ?? (isActive ? Colors.blue[400] : Colors.white54), fontWeight: isActive ? FontWeight.bold : FontWeight.normal, fontSize: 16)),
+      leading: Icon(icon, color: iconColor ?? (isActive ? _accentCyan : Colors.white54)),
+      title: Text(title, style: TextStyle(color: textColor ?? (isActive ? _accentCyan : Colors.white54), fontWeight: isActive ? FontWeight.bold : FontWeight.normal, fontSize: 16)),
       contentPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 8),
       onTap: onTap,
     );
@@ -885,8 +1100,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       height: 90,
       padding: const EdgeInsets.symmetric(horizontal: 32),
       decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border(bottom: BorderSide(color: Colors.grey[200]!)),
+        color: _bgDark,
+        border: Border(bottom: BorderSide(color: Colors.white.withOpacity(0.05))),
       ),
       child: Row(
         children: [
@@ -894,22 +1109,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
             stream: Stream.periodic(const Duration(seconds: 1)),
             builder: (context, snapshot) {
               final now = DateTime.now();
-              const List<String> weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-              const List<String> months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+              const List<String> weekdaysEn = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+              const List<String> monthsEn = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+              const List<String> weekdaysFr = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
+              const List<String> monthsFr = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
 
-              String dayName = weekdays[now.weekday - 1];
-              String monthName = months[now.month - 1];
+              String dayName = _isFrench ? weekdaysFr[now.weekday - 1] : weekdaysEn[now.weekday - 1];
+              String monthName = _isFrench ? monthsFr[now.month - 1] : monthsEn[now.month - 1];
               String hour = now.hour.toString().padLeft(2, '0');
               String minute = now.minute.toString().padLeft(2, '0');
-              String second = now.second.toString().padLeft(2, '0');
 
               return Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text("$dayName, $monthName ${now.day}, ${now.year}", style: const TextStyle(color: Colors.black54, fontSize: 14, fontWeight: FontWeight.w600, letterSpacing: 0.5)),
+                  Text("$dayName, ${_isFrench ? "${now.day} $monthName" : "$monthName ${now.day}"}", style: const TextStyle(color: Colors.white54, fontSize: 14, fontWeight: FontWeight.w600, letterSpacing: 0.5)),
                   const SizedBox(height: 2),
-                  Text("$hour:$minute:$second", style: const TextStyle(color: Colors.black87, fontSize: 24, fontWeight: FontWeight.w900, letterSpacing: 1)),
+                  Text("$hour:$minute", style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w900, letterSpacing: 1)),
                 ],
               );
             },
@@ -917,9 +1133,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
           const Spacer(),
 
-          // --- IMPLEMENTED: The beautiful animated toggle ---
           _buildLanguageToggle(),
-          const SizedBox(width: 32), // Breathing room between the toggle and the store profile
+          const SizedBox(width: 32),
 
           InkWell(
             onTap: _showEditStoreProfileDialog,
@@ -932,20 +1147,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      Text(_storeLocation.toUpperCase(), style: const TextStyle(color: Colors.black45, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
-                      Text(_storeName, style: const TextStyle(color: Colors.black87, fontSize: 20, fontWeight: FontWeight.bold)),
+                      Text(_storeLocation.toUpperCase(), style: const TextStyle(color: Colors.white38, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
+                      Text(_storeName, style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
                     ],
                   ),
                   const SizedBox(width: 20),
                   Container(
-                    width: 70, height: 70,
+                    width: 60, height: 60,
                     decoration: BoxDecoration(
-                      color: Colors.grey[100],
+                      color: _cardDark,
                       shape: BoxShape.circle,
-                      border: Border.all(color: Colors.grey[300]!, width: 2),
+                      border: Border.all(color: Colors.white.withOpacity(0.1), width: 1),
                       image: _storeLogoPath != null ? DecorationImage(image: FileImage(File(_storeLogoPath!)), fit: BoxFit.cover) : null,
                     ),
-                    child: _storeLogoPath == null ? Icon(Icons.storefront, color: Colors.blue[700], size: 36) : null,
+                    child: _storeLogoPath == null ? Icon(Icons.storefront, color: _accentCyan, size: 28) : null,
                   ),
                 ],
               ),
@@ -957,17 +1172,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildPageHeader() {
+    bool isFilterActive = _workingMinuteStart > 0 || _workingMinuteEnd < 1439;
+
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Dashboard Overview', style: TextStyle(fontSize: 32, fontWeight: FontWeight.w800, color: Colors.black87, letterSpacing: -0.5)),
+            Text(
+                _isFrench ? 'Vue d\'Ensemble' : 'Command Center',
+                style: const TextStyle(fontSize: 36, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: -1)
+            ),
             if (_selectedFolderPath != null)
               Padding(
                 padding: const EdgeInsets.only(top: 4.0),
-                child: Text('Source: $_selectedFolderPath', style: const TextStyle(color: Colors.black45, fontSize: 14)),
+                child: Text('Source: $_selectedFolderPath', style: const TextStyle(color: Colors.white38, fontSize: 14)),
               ),
           ],
         ),
@@ -983,34 +1203,49 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     _applyFilter();
                   });
                 },
-                label: const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  child: Text('Compare vs Previous', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                label: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  child: Text(_isFrench ? 'Comparer au Précédent' : 'Compare vs Previous', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: _isCompareMode ? Colors.black : Colors.white70)),
                 ),
-                selectedColor: Colors.blue.withOpacity(0.15),
-                checkmarkColor: Colors.blue[700],
-                backgroundColor: Colors.white,
-                shape: StadiumBorder(side: BorderSide(color: _isCompareMode ? Colors.blue[700]! : Colors.grey[300]!, width: 1.5)),
+                selectedColor: _accentCyan,
+                checkmarkColor: Colors.black,
+                backgroundColor: _cardDark,
+                shape: StadiumBorder(side: BorderSide(color: _isCompareMode ? _accentCyan : Colors.white.withOpacity(0.1), width: 1.5)),
               ),
               const SizedBox(width: 16),
             ],
 
             Container(
-              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.grey[300]!, width: 1.5)),
+              decoration: BoxDecoration(color: _cardDark, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.white.withOpacity(0.1), width: 1.5)),
               padding: const EdgeInsets.all(4),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  IconButton(icon: const Icon(Icons.chevron_left, color: Colors.black54), onPressed: () => _shiftDate(-1)),
+                  IconButton(icon: const Icon(Icons.chevron_left, color: Colors.white54), onPressed: () => _shiftDate(-1)),
                   GestureDetector(
                     onTap: _pickDateRange,
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: Text(_getFormattedDateString(), style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black87, fontSize: 16)),
+                      child: Text(_getFormattedDateString(), style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 16)),
                     ),
                   ),
-                  IconButton(icon: const Icon(Icons.chevron_right, color: Colors.black54), onPressed: () => _shiftDate(1)),
+                  IconButton(icon: const Icon(Icons.chevron_right, color: Colors.white54), onPressed: () => _shiftDate(1)),
                 ],
+              ),
+            ),
+            const SizedBox(width: 16),
+
+            // --- THE NEW OPERATING HOURS FILTER BUTTON ---
+            Container(
+              decoration: BoxDecoration(
+                  color: isFilterActive ? _accentCyan.withOpacity(0.1) : _cardDark,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: isFilterActive ? _accentCyan : Colors.white.withOpacity(0.1), width: 1.5)
+              ),
+              child: IconButton(
+                icon: Icon(Icons.access_time_filled, color: isFilterActive ? _accentCyan : Colors.white54),
+                onPressed: _showWorkingHoursDialog,
+                tooltip: _isFrench ? "Heures d'Ouverture" : "Operating Hours",
               ),
             ),
           ],
@@ -1025,17 +1260,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
         padding: const EdgeInsets.only(top: 100),
         child: Column(
           children: [
-            Icon(Icons.folder_open, size: 100, color: Colors.grey[300]),
+            Icon(Icons.folder_open, size: 100, color: Colors.white.withOpacity(0.1)),
             const SizedBox(height: 24),
-            const Text('No Data Selected', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.black87)),
+            Text(_isFrench ? 'Aucune Donnée Sélectionnée' : 'No Data Selected', style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.white)),
             const SizedBox(height: 12),
-            const Text('Please select a data source or start the FTP server from the menu.', style: TextStyle(color: Colors.black54, fontSize: 16)),
+            Text(
+                _isFrench
+                    ? 'Veuillez sélectionner une source de données ou démarrer le serveur FTP.'
+                    : 'Please select a data source or start the FTP server from the menu.',
+                style: const TextStyle(color: Colors.white54, fontSize: 16)
+            ),
             const SizedBox(height: 32),
             ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[700], foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 20)),
+              style: ElevatedButton.styleFrom(backgroundColor: _accentCyan, foregroundColor: Colors.black, padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 20)),
               onPressed: _pickFolderAndLoadData,
               icon: const Icon(Icons.drive_folder_upload, size: 24),
-              label: const Text('IMPORT DATA', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              label: Text(_isFrench ? 'IMPORTER DES DONNÉES' : 'IMPORT DATA', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             )
           ],
         ),
@@ -1043,21 +1283,237 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildTrafficSummaryCards(bool isDesktop) {
+  Widget _buildSmartInsights() {
     int totalVisitors = (_totalIn + _totalOut) ~/ 2;
 
-    final cards = [
-      _buildWhiteMetricCard('Total In', _totalIn.toString(), Icons.login, Colors.blue, trendWidget: _buildTrendBadge(_totalIn, _compareTotalIn)),
-      _buildWhiteMetricCard('Total Out', _totalOut.toString(), Icons.logout, Colors.orange, trendWidget: _buildTrendBadge(_totalOut, _compareTotalOut)),
-      _buildWhiteMetricCard('Total Visitors', totalVisitors.toString(), Icons.groups, Colors.green, trendWidget: _buildTrendBadge(totalVisitors, _compareTotalVisitors)),
-      _buildWhiteMetricCard('Peak Hour', _peakHour, Icons.access_time, Colors.purple),
-    ];
+    // Convert the working hours to strings for the insight banner
+    String startStr = _formatMinutesToTimeString(_workingMinuteStart);
+    String endStr = _formatMinutesToTimeString(_workingMinuteEnd);
+    bool isFilterActive = _workingMinuteStart > 0 || _workingMinuteEnd < 1439;
 
-    if (isDesktop) { return Row(children: cards.map((c) => Expanded(child: Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: c))).toList()); }
-    else { return Wrap(spacing: 16, runSpacing: 16, children: cards.map((c) => SizedBox(width: MediaQuery.of(context).size.width / 2 - 40, child: c)).toList()); }
+    String insightText = _isFrench
+        ? "Surveillance en temps réel. Les visiteurs d'aujourd'hui sont à $totalVisitors avec un pic à $_peakHour."
+        : "Real-time monitoring. Today's visitor count is $totalVisitors, peaking at $_peakHour.";
+
+    if (isFilterActive) {
+      insightText += _isFrench ? " (Filtré: $startStr - $endStr)" : " (Filtered: $startStr - $endStr)";
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(colors: [_cardDark, _cardDark.withOpacity(0.5)]),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _accentCyan.withOpacity(0.3), width: 1),
+        boxShadow: [BoxShadow(color: _accentCyan.withOpacity(0.05), blurRadius: 20)],
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.auto_awesome, color: _accentCyan, size: 24),
+          const SizedBox(width: 16),
+          Expanded(child: Text(insightText, style: const TextStyle(color: Colors.white70, fontSize: 15, fontWeight: FontWeight.w500))),
+        ],
+      ),
+    );
   }
 
-  Widget _buildBusinessPerformanceCards(bool isDesktop) {
+  Widget _buildHeroChart() {
+    int totalVisitors = (_totalIn + _totalOut) ~/ 2;
+
+    List<LineChartBarData> chartLines = [];
+
+    if (_isCompareMode) {
+      chartLines.add(LineChartBarData(
+        spots: _displayedData.asMap().entries.map((e) => FlSpot(e.key.toDouble(), ((e.value.inCount + e.value.outCount) / 2).toDouble())).toList(),
+        isCurved: true, color: _accentCyan, barWidth: 4, isStrokeCapRound: true, dotData: FlDotData(show: false),
+        belowBarData: BarAreaData(show: true, gradient: LinearGradient(colors: [_accentCyan.withOpacity(0.3), Colors.transparent], begin: Alignment.topCenter, end: Alignment.bottomCenter)),
+      ));
+      chartLines.add(LineChartBarData(
+        spots: _compareDisplayedData.asMap().entries.map((e) => FlSpot(e.key.toDouble(), ((e.value.inCount + e.value.outCount) / 2).toDouble())).toList(),
+        isCurved: true, color: _accentGrey, barWidth: 3, dashArray: [5, 5], isStrokeCapRound: true, dotData: FlDotData(show: false),
+      ));
+    } else {
+      chartLines.add(LineChartBarData(
+        spots: _displayedData.asMap().entries.map((e) => FlSpot(e.key.toDouble(), e.value.inCount.toDouble())).toList(),
+        isCurved: true, color: _accentCyan, barWidth: 4, isStrokeCapRound: true, dotData: FlDotData(show: false),
+        belowBarData: BarAreaData(show: true, gradient: LinearGradient(colors: [_accentCyan.withOpacity(0.3), Colors.transparent], begin: Alignment.topCenter, end: Alignment.bottomCenter)),
+      ));
+      chartLines.add(LineChartBarData(
+        spots: _displayedData.asMap().entries.map((e) => FlSpot(e.key.toDouble(), e.value.outCount.toDouble())).toList(),
+        isCurved: true, color: _accentMagenta, barWidth: 4, isStrokeCapRound: true, dotData: FlDotData(show: false),
+        belowBarData: BarAreaData(show: true, gradient: LinearGradient(colors: [_accentMagenta.withOpacity(0.3), Colors.transparent], begin: Alignment.topCenter, end: Alignment.bottomCenter)),
+      ));
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(32),
+      decoration: BoxDecoration(
+        color: _cardDark,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white.withOpacity(0.05)),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.3), blurRadius: 30, offset: const Offset(0, 10))],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(_isFrench ? 'TOTAL VISITEURS' : 'TOTAL VISITORS', style: const TextStyle(color: Colors.white54, fontSize: 14, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
+                  const SizedBox(height: 8),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Text(totalVisitors.toString(), style: const TextStyle(color: Colors.white, fontSize: 56, fontWeight: FontWeight.w900, letterSpacing: -2)),
+                      const SizedBox(width: 16),
+                      _buildTrendBadge(totalVisitors, _compareTotalVisitors),
+                    ],
+                  )
+                ],
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                        decoration: BoxDecoration(color: _bgDark, borderRadius: BorderRadius.circular(8)),
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<ChartFilter>(
+                            dropdownColor: _cardDark,
+                            value: _currentFilter, icon: const Icon(Icons.keyboard_arrow_down, color: Colors.white54), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                            items: [
+                              DropdownMenuItem(value: ChartFilter.hourly, child: Text(_isFrench ? 'Vue Horaire' : 'Hourly View')),
+                              DropdownMenuItem(value: ChartFilter.daily, child: Text(_isFrench ? 'Vue Journalière' : 'Daily View'))
+                            ],
+                            onChanged: (ChartFilter? newValue) { if (newValue != null) { setState(() { _currentFilter = newValue; _applyFilter(); }); } },
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  if (_isCompareMode) ...[
+                    Row(children: [Icon(Icons.circle, size: 10, color: _accentCyan), const SizedBox(width: 8), Text(_isFrench ? 'Actuel' : 'Current', style: const TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600))]),
+                    const SizedBox(height: 4),
+                    Row(children: [Icon(Icons.circle, size: 10, color: _accentGrey), const SizedBox(width: 8), Text(_isFrench ? 'Précédent' : 'Previous', style: const TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600))]),
+                  ] else ...[
+                    Row(children: [Icon(Icons.login, color: _accentCyan, size: 16), const SizedBox(width: 8), Text('${_isFrench ? "Entrées" : "In"}: $_totalIn', style: const TextStyle(color: Colors.white70, fontSize: 16, fontWeight: FontWeight.w600))]),
+                    const SizedBox(height: 4),
+                    Row(children: [Icon(Icons.logout, color: _accentMagenta, size: 16), const SizedBox(width: 8), Text('${_isFrench ? "Sorties" : "Out"}: $_totalOut', style: const TextStyle(color: Colors.white70, fontSize: 16, fontWeight: FontWeight.w600))]),
+                  ]
+                ],
+              )
+            ],
+          ),
+          const SizedBox(height: 40),
+
+          SizedBox(
+            height: 350,
+            child: LineChart(
+              LineChartData(
+                lineTouchData: LineTouchData(
+                  touchTooltipData: LineTouchTooltipData(
+                    tooltipBgColor: _bgDark,
+                    getTooltipItems: (touchedSpots) {
+                      return touchedSpots.map((LineBarSpot touchedSpot) {
+                        final textStyle = TextStyle(color: touchedSpot.bar.color ?? Colors.white, fontWeight: FontWeight.bold, fontSize: 14);
+                        String timeText = _displayedData.length > touchedSpot.x.toInt() ? _displayedData[touchedSpot.x.toInt()].time : "";
+                        String type = "";
+                        if (_isCompareMode) { type = touchedSpot.barIndex == 0 ? (_isFrench ? "Actuel: " : "Current: ") : (_isFrench ? "Précédent: " : "Previous: "); }
+                        else { type = touchedSpot.barIndex == 0 ? (_isFrench ? "Entrées: " : "In: ") : (_isFrench ? "Sorties: " : "Out: "); }
+                        return LineTooltipItem("$timeText\n$type${touchedSpot.y.toInt()}", textStyle);
+                      }).toList();
+                    },
+                  ),
+                ),
+                gridData: FlGridData(show: false),
+                titlesData: FlTitlesData(
+                  rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  leftTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  bottomTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true, reservedSize: 32, interval: 1,
+                      getTitlesWidget: (value, meta) {
+                        int index = value.toInt();
+                        if (index >= 0 && index < _displayedData.length) {
+                          if (_displayedData.length > 12 && index % 2 != 0) return const SizedBox.shrink();
+                          return Padding(padding: const EdgeInsets.only(top: 10.0), child: Text(_displayedData[index].time, style: const TextStyle(color: Colors.white38, fontSize: 12, fontWeight: FontWeight.bold)));
+                        }
+                        return const SizedBox.shrink();
+                      },
+                    ),
+                  ),
+                ),
+                borderData: FlBorderData(show: false),
+                lineBarsData: chartLines,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildZoneSelector() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(_isFrench ? 'ZONES ET PORTES' : 'ZONES & DOORS', style: const TextStyle(color: Colors.white54, fontSize: 14, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
+        const SizedBox(height: 16),
+        SizedBox(
+          height: 110,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            itemCount: _availableCameras.length,
+            itemBuilder: (context, index) {
+              String cameraName = _availableCameras[index];
+              bool isSelected = _selectedCamera == cameraName;
+              String displayName = cameraName == 'All Doors' ? (_isFrench ? 'Toutes les Portes' : 'All Doors') : cameraName.toUpperCase();
+
+              return GestureDetector(
+                onTap: () => setState(() { _selectedCamera = cameraName; _applyFilter(); }),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 300),
+                  margin: const EdgeInsets.only(right: 16),
+                  width: 220,
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: isSelected ? _accentCyan.withOpacity(0.1) : _cardDark,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: isSelected ? _accentCyan : Colors.white.withOpacity(0.05), width: 2),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(displayName, style: TextStyle(color: isSelected ? Colors.white : Colors.white70, fontWeight: FontWeight.bold, fontSize: 16), maxLines: 1, overflow: TextOverflow.ellipsis),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Container(width: 8, height: 8, decoration: BoxDecoration(color: isSelected ? _accentCyan : Colors.white38, shape: BoxShape.circle)),
+                          const SizedBox(width: 8),
+                          Text(isSelected ? (_isFrench ? 'Sélectionné' : 'Selected') : (_isFrench ? 'Cliquez pour filtrer' : 'Tap to filter'), style: TextStyle(color: isSelected ? _accentCyan : Colors.white38, fontSize: 12, fontWeight: FontWeight.bold)),
+                        ],
+                      )
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBentoGrid(bool isDesktop) {
     int totalVisitors = (_totalIn + _totalOut) ~/ 2;
     double conversionRate = totalVisitors > 0 ? (_currentClients / totalVisitors) * 100 : 0.0;
     double avgBasket = _currentClients > 0 ? (_currentCa / _currentClients) : 0.0;
@@ -1067,184 +1523,92 @@ class _DashboardScreenState extends State<DashboardScreen> {
     double compareBasket = _compareClients > 0 ? (_compareCa / _compareClients) : 0.0;
     double compareUpt = _compareClients > 0 ? (_compareArticles / _compareClients) : 0.0;
 
-    final cards = [
-      _buildWhiteMetricCard('Conversion Rate', '${conversionRate.toStringAsFixed(1)}%', Icons.track_changes, Colors.red, trendWidget: _buildTrendBadge(conversionRate, compareConv)),
-      _buildWhiteMetricCard('Revenue (CA)', '${_currentCa.toStringAsFixed(0)} DZD', Icons.payments, Colors.teal, trendWidget: _buildTrendBadge(_currentCa, _compareCa)),
-      _buildWhiteMetricCard('Avg Basket', '${avgBasket.toStringAsFixed(2)} DZD', Icons.shopping_cart, Colors.indigo, trendWidget: _buildTrendBadge(avgBasket, compareBasket)),
-      _buildWhiteMetricCard('U.P.T', upt.toStringAsFixed(2), Icons.layers, Colors.pink, trendWidget: _buildTrendBadge(upt, compareUpt)),
+    List<Widget> gridItems = [
+      _buildBentoCard(
+          title: _isFrench ? 'Chiffre d\'Affaires (CA)' : 'Revenue (CA)',
+          value: '${_currentCa.toStringAsFixed(0)} DZD',
+          icon: Icons.payments,
+          color: Colors.greenAccent,
+          height: 200,
+          trendWidget: _buildTrendBadge(_currentCa, _compareCa)
+      ),
+      _buildBentoCard(
+          title: _isFrench ? 'Taux de Conv.' : 'Conv. Rate',
+          value: '${conversionRate.toStringAsFixed(1)}%',
+          icon: Icons.track_changes,
+          color: Colors.orangeAccent,
+          height: 200,
+          trendWidget: _buildTrendBadge(conversionRate, compareConv)
+      ),
+      _buildBentoCard(
+          title: _isFrench ? 'Panier Moyen' : 'Avg Basket',
+          value: '${avgBasket.toStringAsFixed(0)} DZD',
+          icon: Icons.shopping_cart,
+          color: Colors.indigoAccent,
+          height: 200,
+          trendWidget: _buildTrendBadge(avgBasket, compareBasket)
+      ),
+      _buildBentoCard(
+          title: _isFrench ? 'I.D.V' : 'U.P.T',
+          value: upt.toStringAsFixed(2),
+          icon: Icons.layers,
+          color: Colors.purpleAccent,
+          height: 200,
+          trendWidget: _buildTrendBadge(upt, compareUpt)
+      ),
     ];
 
-    if (isDesktop) { return Row(children: cards.map((c) => Expanded(child: Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: c))).toList()); }
-    else { return Wrap(spacing: 16, runSpacing: 16, children: cards.map((c) => SizedBox(width: MediaQuery.of(context).size.width / 2 - 40, child: c)).toList()); }
+    if (isDesktop) {
+      return Row(
+        children: [
+          Expanded(flex: 2, child: gridItems[0]), const SizedBox(width: 24),
+          Expanded(flex: 1, child: gridItems[1]), const SizedBox(width: 24),
+          Expanded(flex: 1, child: gridItems[2]), const SizedBox(width: 24),
+          Expanded(flex: 1, child: gridItems[3]),
+        ],
+      );
+    } else {
+      return Column(
+        children: [
+          gridItems[0], const SizedBox(height: 16),
+          Row(children: [Expanded(child: gridItems[1]), const SizedBox(width: 16), Expanded(child: gridItems[2])]), const SizedBox(height: 16),
+          gridItems[3],
+        ],
+      );
+    }
   }
 
-  Widget _buildWhiteMetricCard(String title, String value, IconData icon, MaterialColor colorTheme, {Widget? trendWidget}) {
+  Widget _buildBentoCard({required String title, required String value, required IconData icon, required Color color, required double height, Widget? trendWidget}) {
     return Container(
+      height: height,
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 15, offset: const Offset(0, 5))],
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(title, style: const TextStyle(fontSize: 15, color: Colors.black54, fontWeight: FontWeight.w600)),
-              const SizedBox(height: 8),
-              Text(value, style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: Colors.black87, letterSpacing: -0.5)),
-              if (trendWidget != null) trendWidget,
-            ],
-          ),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(color: colorTheme[50], shape: BoxShape.circle),
-            child: Icon(icon, color: colorTheme[600], size: 28),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildInteractiveChartSection() {
-    List<LineChartBarData> chartLines = [];
-
-    if (_isCompareMode) {
-      chartLines.add(LineChartBarData(
-        spots: _displayedData.asMap().entries.map((e) => FlSpot(e.key.toDouble(), ((e.value.inCount + e.value.outCount) / 2).toDouble())).toList(),
-        isCurved: true, color: Colors.blue[600], barWidth: 4, isStrokeCapRound: true, dotData: FlDotData(show: false),
-        belowBarData: BarAreaData(show: true, gradient: LinearGradient(colors: [Colors.blue.withOpacity(0.2), Colors.blue.withOpacity(0.0)], begin: Alignment.topCenter, end: Alignment.bottomCenter)),
-      ));
-      chartLines.add(LineChartBarData(
-        spots: _compareDisplayedData.asMap().entries.map((e) => FlSpot(e.key.toDouble(), ((e.value.inCount + e.value.outCount) / 2).toDouble())).toList(),
-        isCurved: true, color: Colors.grey[400], barWidth: 3, dashArray: [5, 5], isStrokeCapRound: true, dotData: FlDotData(show: false),
-      ));
-    } else {
-      chartLines.add(LineChartBarData(
-        spots: _displayedData.asMap().entries.map((e) => FlSpot(e.key.toDouble(), e.value.inCount.toDouble())).toList(),
-        isCurved: true, color: Colors.blue[600], barWidth: 4, isStrokeCapRound: true, dotData: FlDotData(show: false),
-        belowBarData: BarAreaData(show: true, gradient: LinearGradient(colors: [Colors.blue.withOpacity(0.2), Colors.blue.withOpacity(0.0)], begin: Alignment.topCenter, end: Alignment.bottomCenter)),
-      ));
-      chartLines.add(LineChartBarData(
-        spots: _displayedData.asMap().entries.map((e) => FlSpot(e.key.toDouble(), e.value.outCount.toDouble())).toList(),
-        isCurved: true, color: Colors.pink[400], barWidth: 4, isStrokeCapRound: true, dotData: FlDotData(show: false),
-        belowBarData: BarAreaData(show: true, gradient: LinearGradient(colors: [Colors.pink.withOpacity(0.2), Colors.pink.withOpacity(0.0)], begin: Alignment.topCenter, end: Alignment.bottomCenter)),
-      ));
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(32),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 15, offset: const Offset(0, 5))],
+        color: _cardDark,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white.withOpacity(0.05)),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  const Text('Traffic Overview', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87)),
-                  const SizedBox(width: 16),
-                  if (_isCompareMode) ...[
-                    Row(children: [Icon(Icons.circle, size: 12, color: Colors.blue[600]), const SizedBox(width: 6), const Text('Current', style: TextStyle(fontSize: 14, color: Colors.black54))]),
-                    const SizedBox(width: 16),
-                    Row(children: [Icon(Icons.circle, size: 12, color: Colors.grey[400]), const SizedBox(width: 6), const Text('Previous', style: TextStyle(fontSize: 14, color: Colors.black54))]),
-                  ] else ...[
-                    Row(children: [Icon(Icons.circle, size: 12, color: Colors.blue[600]), const SizedBox(width: 6), const Text('In', style: TextStyle(fontSize: 14, color: Colors.black54))]),
-                    const SizedBox(width: 16),
-                    Row(children: [Icon(Icons.circle, size: 12, color: Colors.pink[400]), const SizedBox(width: 6), const Text('Out', style: TextStyle(fontSize: 14, color: Colors.black54))]),
-                  ]
-                ],
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(color: color.withOpacity(0.1), shape: BoxShape.circle),
+                child: Icon(icon, color: color, size: 28),
               ),
-
-              Row(
-                children: [
-                  if (_availableCameras.length > 1)
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                      decoration: BoxDecoration(color: Colors.blue.withOpacity(0.05), borderRadius: BorderRadius.circular(8)),
-                      child: DropdownButtonHideUnderline(
-                        child: DropdownButton<String>(
-                          value: _selectedCamera, icon: Icon(Icons.keyboard_arrow_down, color: Colors.blue[700]), style: TextStyle(color: Colors.blue[700], fontWeight: FontWeight.bold, fontSize: 16),
-                          items: _availableCameras.map((String camera) { return DropdownMenuItem<String>(value: camera, child: Text(camera == 'All Doors' ? 'All Doors' : camera.toUpperCase())); }).toList(),
-                          onChanged: (String? newValue) { if (newValue != null) { setState(() { _selectedCamera = newValue; _applyFilter(); }); } },
-                        ),
-                      ),
-                    ),
-                  const SizedBox(width: 16),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                    decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(8)),
-                    child: DropdownButtonHideUnderline(
-                      child: DropdownButton<ChartFilter>(
-                        value: _currentFilter, icon: const Icon(Icons.keyboard_arrow_down, color: Colors.black54), style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 16),
-                        items: const [ DropdownMenuItem(value: ChartFilter.hourly, child: Text('Hourly View')), DropdownMenuItem(value: ChartFilter.daily, child: Text('Daily View')) ],
-                        onChanged: (ChartFilter? newValue) { if (newValue != null) { setState(() { _currentFilter = newValue; _applyFilter(); }); } },
-                      ),
-                    ),
-                  ),
-                ],
-              )
+              if (trendWidget != null) trendWidget,
             ],
           ),
-          const SizedBox(height: 40),
-
-          SizedBox(
-            height: 450,
-            child: LineChart(
-              LineChartData(
-                lineTouchData: LineTouchData(
-                  touchTooltipData: LineTouchTooltipData(
-                    tooltipBgColor: Colors.black87,
-                    getTooltipItems: (touchedSpots) {
-                      return touchedSpots.map((LineBarSpot touchedSpot) {
-                        final textStyle = TextStyle(color: touchedSpot.bar.color ?? Colors.white, fontWeight: FontWeight.bold, fontSize: 14);
-                        String timeText = _displayedData.length > touchedSpot.x.toInt() ? _displayedData[touchedSpot.x.toInt()].time : "";
-                        String type = "";
-
-                        if (_isCompareMode) {
-                          type = touchedSpot.barIndex == 0 ? "Current: " : "Previous: ";
-                        } else {
-                          type = touchedSpot.barIndex == 0 ? "In: " : "Out: ";
-                        }
-
-                        return LineTooltipItem("$timeText\n$type${touchedSpot.y.toInt()}", textStyle);
-                      }).toList();
-                    },
-                  ),
-                ),
-                gridData: FlGridData(show: true, drawVerticalLine: false, getDrawingHorizontalLine: (value) => FlLine(color: Colors.grey[200]!, strokeWidth: 1)),
-                titlesData: FlTitlesData(
-                  rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                  topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                  bottomTitles: AxisTitles(
-                    sideTitles: SideTitles(
-                      showTitles: true, reservedSize: 32, interval: 1,
-                      getTitlesWidget: (value, meta) {
-                        int index = value.toInt();
-                        if (index >= 0 && index < _displayedData.length) {
-                          if (_displayedData.length > 12 && index % 2 != 0) return const SizedBox.shrink();
-                          return Padding(padding: const EdgeInsets.only(top: 10.0), child: Text(_displayedData[index].time, style: const TextStyle(color: Colors.black54, fontSize: 12)));
-                        }
-                        return const SizedBox.shrink();
-                      },
-                    ),
-                  ),
-                  leftTitles: AxisTitles(
-                    sideTitles: SideTitles(showTitles: true, reservedSize: 40, getTitlesWidget: (value, meta) { return Text(value.toInt().toString(), style: const TextStyle(color: Colors.black54, fontSize: 13)); }),
-                  ),
-                ),
-                borderData: FlBorderData(show: false),
-                lineBarsData: chartLines,
-              ),
-            ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: const TextStyle(fontSize: 16, color: Colors.white54, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              Text(value, style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: -0.5)),
+            ],
           ),
         ],
       ),
