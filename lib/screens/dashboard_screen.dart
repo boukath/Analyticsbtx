@@ -45,9 +45,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String _expectedIp = "";
   String _actualIp = "";
 
-  // --- NEW: Aggressive Alert Variables ---
+  // --- Aggressive Alert Variables ---
   bool _isAlertSilenced = false;
   bool _isAlertDialogOpen = false;
+
+  // --- NEW: Language State ---
+  bool _isFrench = false;
 
   List<String> _availableCameras = ['All Doors'];
   String _selectedCamera = 'All Doors';
@@ -80,6 +83,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
+    _loadLanguagePref(); // Load language preference on startup
     _loadStoreProfile();
     _loadPosDatabase();
     _loadSavedFolder();
@@ -95,7 +99,40 @@ class _DashboardScreenState extends State<DashboardScreen> {
     super.dispose();
   }
 
-  // --- UPDATED: Security Monitor with Aggressive Alert ---
+  // --- NEW: Load & Save Language Preferences ---
+  Future<void> _loadLanguagePref() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _isFrench = prefs.getString('app_language') == 'fr';
+    });
+  }
+
+  Future<void> _toggleLanguage() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _isFrench = !_isFrench;
+    });
+    await prefs.setString('app_language', _isFrench ? 'fr' : 'en');
+
+    // Show a small beautiful alert
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _isFrench ? 'Langue changée en Français (Redémarrez l\'application pour appliquer partout)'
+                  : 'Language changed to English (Restart app to apply everywhere)',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            backgroundColor: const Color(0xFF1E293B),
+            duration: const Duration(seconds: 3),
+          )
+      );
+    }
+  }
+
+  // --- Security Monitor with Aggressive Alert ---
   void _startSecurityMonitor() {
     _securityTimer = Timer.periodic(const Duration(seconds: 10), (timer) async {
       final prefs = await SharedPreferences.getInstance();
@@ -127,7 +164,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
   }
 
-  // --- NEW: Aggressive Password Alert Dialog ---
+  // --- Aggressive Password Alert Dialog ---
   void _showPasswordAlertDialog() {
     _isAlertDialogOpen = true;
     TextEditingController passCtrl = TextEditingController();
@@ -179,7 +216,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 actions: [
                   TextButton(
                     onPressed: () {
-                      // Close dialog and go to FTP settings to fix the network
                       _isAlertDialogOpen = false;
                       Navigator.of(c).pop();
                       Navigator.push(context, MaterialPageRoute(builder: (context) => const FtpServerScreen()));
@@ -190,12 +226,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent, foregroundColor: Colors.white),
                     onPressed: () {
                       if (passCtrl.text == "Boitexinfo") {
-                        // Password is correct! Silence the popups.
                         _isAlertSilenced = true;
                         _isAlertDialogOpen = false;
                         Navigator.of(c).pop();
                       } else {
-                        // Wrong password
                         setDialogState(() {
                           errorMessage = "Incorrect Password!";
                         });
@@ -574,22 +608,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Future<void> _generateCustomReport(String cam, DateTimeRange range, ChartFilter filter, {required String format}) async {
-    setState(() { _selectedCamera = cam; _selectedDateRange = range; _currentFilter = filter; _applyFilter(); });
-    await Future.delayed(const Duration(milliseconds: 200));
-    if (_displayedData.isEmpty) return;
-    String rType = filter == ChartFilter.hourly ? "Hourly Breakdown" : "Daily Summary Breakdown";
-    String cLabel = cam == 'All Doors' ? 'Global (All Doors)' : 'Camera ${cam.toUpperCase()}';
-    String sCam = cam.replaceAll(' ', '_'), sStart = _formatDateOnly(range.start), sEnd = _formatDateOnly(range.end);
-    String fName = sStart == sEnd ? "TrafficReport_${sCam}_$sStart" : "TrafficReport_${sCam}_${sStart}_to_$sEnd";
-
-    if (format == 'pdf') {
-      await PdfExportService.generateAndPreviewReport(reportType: rType, dateRangeText: _getFormattedDateString(), cameraName: cLabel, data: _displayedData, totalIn: _totalIn, totalOut: _totalOut, peakHour: _peakHour, customFileName: "$fName.pdf");
-    } else {
-      await CsvExportService.generateAndSaveCsv(reportType: rType, dateRangeText: _getFormattedDateString(), cameraName: cLabel, data: _displayedData, totalIn: _totalIn, totalOut: _totalOut, peakHour: _peakHour, customFileName: "$fName.csv");
-    }
-  }
-
   void _showExportMenu() {
     DateTimeRange eRange = _selectedDateRange ?? DateTimeRange(start: DateTime.now(), end: DateTime.now());
     String eCam = _selectedCamera; ChartFilter eFilt = _currentFilter;
@@ -622,6 +640,104 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  Future<void> _generateCustomReport(String cam, DateTimeRange range, ChartFilter filter, {required String format}) async {
+    setState(() { _selectedCamera = cam; _selectedDateRange = range; _currentFilter = filter; _applyFilter(); });
+    await Future.delayed(const Duration(milliseconds: 200));
+    if (_displayedData.isEmpty) return;
+    String rType = filter == ChartFilter.hourly ? "Hourly Breakdown" : "Daily Summary Breakdown";
+    String cLabel = cam == 'All Doors' ? 'Global (All Doors)' : 'Camera ${cam.toUpperCase()}';
+    String sCam = cam.replaceAll(' ', '_'), sStart = _formatDateOnly(range.start), sEnd = _formatDateOnly(range.end);
+    String fName = sStart == sEnd ? "TrafficReport_${sCam}_$sStart" : "TrafficReport_${sCam}_${sStart}_to_$sEnd";
+
+    if (format == 'pdf') {
+      await PdfExportService.generateAndPreviewReport(reportType: rType, dateRangeText: _getFormattedDateString(), cameraName: cLabel, data: _displayedData, totalIn: _totalIn, totalOut: _totalOut, peakHour: _peakHour, customFileName: "$fName.pdf");
+    } else {
+      await CsvExportService.generateAndSaveCsv(reportType: rType, dateRangeText: _getFormattedDateString(), cameraName: cLabel, data: _displayedData, totalIn: _totalIn, totalOut: _totalOut, peakHour: _peakHour, customFileName: "$fName.csv");
+    }
+  }
+
+  // --- NEW: The iOS 26 Style Animated Language Toggle ---
+  Widget _buildLanguageToggle() {
+    return GestureDetector(
+      onTap: _toggleLanguage,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 300),
+        width: 100,
+        height: 44,
+        padding: const EdgeInsets.all(4),
+        decoration: BoxDecoration(
+          color: Colors.grey[200], // Smooth, subtle background like iOS segmented controls
+          borderRadius: BorderRadius.circular(30),
+          border: Border.all(color: Colors.black.withOpacity(0.05), width: 1),
+        ),
+        child: Stack(
+          children: [
+            // The moving "pill" thumb inside the toggle
+            AnimatedAlign(
+              duration: const Duration(milliseconds: 400),
+              curve: Curves.easeOutBack, // Gives that classic bouncy iOS physics
+              alignment: _isFrench ? Alignment.centerRight : Alignment.centerLeft,
+              child: Container(
+                width: 46,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 6,
+                      offset: const Offset(0, 3),
+                    ),
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 1,
+                      offset: const Offset(0, 1),
+                    )
+                  ],
+                ),
+              ),
+            ),
+            // The EN / FR text layout
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                Expanded(
+                  child: Center(
+                    child: AnimatedDefaultTextStyle(
+                      duration: const Duration(milliseconds: 200),
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 14,
+                        letterSpacing: 1,
+                        color: !_isFrench ? Colors.blue[700] : Colors.black45,
+                      ),
+                      child: const Text('EN'),
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Center(
+                    child: AnimatedDefaultTextStyle(
+                      duration: const Duration(milliseconds: 200),
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 14,
+                        letterSpacing: 1,
+                        color: _isFrench ? Colors.blue[700] : Colors.black45,
+                      ),
+                      child: const Text('FR'),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDesktop = MediaQuery.of(context).size.width > 800;
@@ -637,7 +753,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               children: [
                 _buildTopAppBar(),
 
-                // The Passive Security Banner (Always shows if IP is wrong, even if popups are silenced)
+                // The Passive Security Banner
                 if (_isIpMismatch)
                   Container(
                     width: double.infinity,
@@ -800,6 +916,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
 
           const Spacer(),
+
+          // --- IMPLEMENTED: The beautiful animated toggle ---
+          _buildLanguageToggle(),
+          const SizedBox(width: 32), // Breathing room between the toggle and the store profile
 
           InkWell(
             onTap: _showEditStoreProfileDialog,

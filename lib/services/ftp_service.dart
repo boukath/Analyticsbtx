@@ -3,7 +3,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart'; // NEW: Required for the pop-up alert
+import 'package:flutter/material.dart';
 import 'package:ftp_server/ftp_server.dart';
 import 'package:ftp_server/file_operations/physical_file_operations.dart';
 import 'package:ftp_server/server_type.dart';
@@ -43,7 +43,7 @@ class FtpService {
     return false;
   }
 
-  // --- NEW: IP Security Monitor ---
+  // --- IP Security Monitor ---
   static Timer? _ipMonitorTimer;
   static bool _isAlertShowing = false;
 
@@ -70,7 +70,7 @@ class FtpService {
     });
   }
 
-  // --- NEW: Show Emergency Pop-up Dialog ---
+  // --- Show Emergency Pop-up Dialog ---
   static void _showIpAlert(GlobalKey<NavigatorState> navKey, String expectedIp, String actualIp) {
     if (_isAlertShowing) return; // Prevent spamming multiple pop-ups
 
@@ -156,6 +156,7 @@ class FtpService {
         password: password,
         fileOperations: fileOps,
         serverType: ServerType.readAndWrite,
+        // Note: The 'logger' parameter was removed to fix the build error.
       );
 
       await _ftpServer!.startInBackground();

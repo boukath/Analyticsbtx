@@ -1,6 +1,7 @@
 // lib/screens/ftp_server_screen.dart
 
 import 'dart:ui';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -25,6 +26,12 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
 
   final ScrollController _scrollController = ScrollController();
 
+  // --- IP Security Monitor Variables ---
+  Timer? _ipMonitorTimer;
+  String _actualPhysicalIp = "";
+  bool _isIpMismatch = false;
+  bool _isAlertShowing = false;
+
   @override
   void initState() {
     super.initState();
@@ -48,24 +55,105 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
         });
       }
     });
+
+    _startLocalIpMonitor();
+  }
+
+  @override
+  void dispose() {
+    _ipMonitorTimer?.cancel();
+    _scrollController.dispose();
+    _ipController.dispose();
+    _portController.dispose();
+    _userController.dispose();
+    _passController.dispose();
+    super.dispose();
+  }
+
+  void _startLocalIpMonitor() {
+    _ipMonitorTimer = Timer.periodic(const Duration(seconds: 5), (timer) async {
+      String currentIp = await FtpService.getLocalIpAddress();
+      String expectedIp = _ipController.text.trim();
+
+      if (mounted) {
+        setState(() {
+          _actualPhysicalIp = currentIp;
+          _isIpMismatch = expectedIp.isNotEmpty && currentIp != expectedIp;
+        });
+
+        if (_isIpMismatch && !_isAlertShowing && _isRunning) {
+          _showIpAlertDialog(expectedIp, currentIp);
+        }
+      }
+    });
+  }
+
+  void _showIpAlertDialog(String expected, String actual) {
+    _isAlertShowing = true;
+    showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (BuildContext c) {
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1E293B),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: const BorderSide(color: Colors.redAccent, width: 2)),
+            title: const Row(
+              children: [
+                Icon(Icons.warning_amber_rounded, color: Colors.redAccent, size: 32),
+                SizedBox(width: 12),
+                Text("IP ADDRESS CHANGED!", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
+              ],
+            ),
+            content: Text(
+              "The computer's physical IP address has changed!\n\n"
+                  "Expected IP (Saved): $expected\n"
+                  "Current Network IP: ${actual == '127.0.0.1' ? 'DISCONNECTED' : actual}\n\n"
+                  "Cameras will not be able to connect until this is fixed.",
+              style: const TextStyle(color: Colors.white70, fontSize: 16, height: 1.5),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  _isAlertShowing = false;
+                  Navigator.of(c).pop();
+                },
+                child: const Text("DISMISS", style: TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent, foregroundColor: Colors.white),
+                onPressed: () async {
+                  setState(() {
+                    _ipController.text = actual;
+                    _isIpMismatch = false;
+                  });
+                  final prefs = await SharedPreferences.getInstance();
+                  await prefs.setString('ftp_ip', actual);
+
+                  _isAlertShowing = false;
+                  if (context.mounted) Navigator.of(c).pop();
+
+                  FtpService.log("⚠️ IP Address updated by user to: $actual");
+                },
+                child: const Text("UPDATE SETTINGS", style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+            ],
+          );
+        }
+    ).then((_) => _isAlertShowing = false);
   }
 
   Future<void> _initSettings() async {
     final prefs = await SharedPreferences.getInstance();
 
-    // --- NEW: Load saved expected IP, or auto-detect if first time ---
+    // REMOVED AUTO-FETCH: It now ONLY loads exactly what is saved.
     String savedIp = prefs.getString('ftp_ip') ?? '';
-    if (savedIp.isEmpty) {
-      savedIp = await FtpService.getLocalIpAddress();
-    }
-
     String? savedPath = prefs.getString('saved_data_folder');
     int savedPort = prefs.getInt('ftp_port') ?? 2121;
     String savedUser = prefs.getString('ftp_user') ?? "camera";
     String savedPass = prefs.getString('ftp_pass') ?? "password";
 
     setState(() {
-      _ipController.text = savedIp; // Sets the editable field
+      _ipController.text = savedIp;
       _portController.text = savedPort.toString();
       _userController.text = savedUser;
       _passController.text = savedPass;
@@ -100,7 +188,6 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
 
       int port = int.tryParse(_portController.text) ?? 2121;
 
-      // --- NEW: Save the Technician's Expected IP ---
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('ftp_ip', _ipController.text.trim());
       await prefs.setInt('ftp_port', port);
@@ -156,8 +243,56 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
         const Text('CONNECTION SETTINGS', style: TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
         const SizedBox(height: 16),
 
-        // --- NEW: Editable IP Address Field ---
-        _buildTextField("Expected PC IP Address (Editable)", _ipController),
+        if (_isIpMismatch)
+          Container(
+            padding: const EdgeInsets.all(12),
+            margin: const EdgeInsets.only(bottom: 16),
+            decoration: BoxDecoration(color: Colors.redAccent.withOpacity(0.2), borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.redAccent)),
+            child: Row(
+              children: [
+                const Icon(Icons.error_outline, color: Colors.redAccent),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    "Network changed! Actual IP is currently ${_actualPhysicalIp == '127.0.0.1' ? 'DISCONNECTED' : _actualPhysicalIp}",
+                    style: const TextStyle(color: Colors.redAccent, fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+        // --- NEW: IP Field with Auto-Detect Button ---
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(child: _buildTextField("Expected PC IP Address", _ipController)),
+            const SizedBox(width: 12),
+            Container(
+              height: 56, // Matches the height of the TextField
+              margin: const EdgeInsets.only(bottom: 16),
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.cyanAccent.withOpacity(0.1),
+                  foregroundColor: Colors.cyanAccent,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      side: const BorderSide(color: Colors.cyanAccent, width: 1)
+                  ),
+                ),
+                icon: const Icon(Icons.wifi_find),
+                label: const Text("AUTO-DETECT", style: TextStyle(fontWeight: FontWeight.bold)),
+                onPressed: () async {
+                  String currentIp = await FtpService.getLocalIpAddress();
+                  setState(() {
+                    _ipController.text = currentIp;
+                  });
+                  FtpService.log("🔍 Auto-detected IP: $currentIp. (Click START SERVER to save)");
+                },
+              ),
+            ),
+          ],
+        ),
 
         _buildTextField("Port", _portController),
         _buildTextField("FTP Username", _userController),

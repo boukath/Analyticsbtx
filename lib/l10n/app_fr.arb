@@ -1,0 +1,6 @@
+{
+  "appTitle": "Tableau de Bord Analytique",
+  "startServer": "DÉMARRER LE SERVEUR",
+  "stopServer": "ARRÊTER LE SERVEUR",
+  "expectedIp": "Adresse IP PC Attendue"
+}

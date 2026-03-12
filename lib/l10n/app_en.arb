@@ -1,0 +1,6 @@
+{
+  "appTitle": "Analytics Dashboard",
+  "startServer": "START SERVER",
+  "stopServer": "STOP SERVER",
+  "expectedIp": "Expected PC IP Address"
+}
