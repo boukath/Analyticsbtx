@@ -29,7 +29,7 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   List<PeopleCount> _rawData = [];
   List<PeopleCount> _displayedData = [];
-
+  Map<String, List<PeopleCount>> _perDoorData = {};
   bool _isLoading = false;
   String? _selectedFolderPath;
   ChartFilter _currentFilter = ChartFilter.hourly;
@@ -423,6 +423,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
       if (_currentFilter == ChartFilter.daily) _displayedData = DataAggregator.aggregateByDay(filteredData);
       else _displayedData = DataAggregator.aggregateByHour(filteredData);
+
+      // --- 🚀 NEW: SPLIT DATA PER DOOR FOR THE "ALL DOORS" CHART ---
+      _perDoorData.clear();
+      // Only do this if "All Doors" is selected, we have more than 1 camera, and we aren't in compare mode.
+      if (_selectedCamera == 'All Doors' && _availableCameras.length > 2 && !_isCompareMode) {
+        for (String door in _availableCameras) {
+          if (door == 'All Doors') continue; // Skip the "All Doors" label itself
+
+          var doorSpecificData = filteredData.where((item) => item.doorName == door).toList();
+          if (_currentFilter == ChartFilter.daily) {
+            _perDoorData[door] = DataAggregator.aggregateByDay(doorSpecificData);
+          } else {
+            _perDoorData[door] = DataAggregator.aggregateByHour(doorSpecificData);
+          }
+        }
+      }
 
       _totalIn = 0; _totalOut = 0; int maxTraffic = 0; _peakHour = "--:--";
       for (var item in _displayedData) {
@@ -1322,25 +1338,64 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     List<LineChartBarData> chartLines = [];
 
-    if (_isCompareMode) {
+    // 🚀 NEW: Check if we should show the multi-door colored lines
+    bool showPerDoor = _selectedCamera == 'All Doors' && _availableCameras.length > 2 && !_isCompareMode;
+
+    // A palette of premium neon colors for the different doors
+    List<Color> doorColors = [
+      Colors.blueAccent, Colors.redAccent, Colors.greenAccent,
+      Colors.orangeAccent, Colors.purpleAccent, Colors.tealAccent,
+      Colors.pinkAccent, Colors.yellowAccent
+    ];
+    List<String> plottedDoors = _perDoorData.keys.toList();
+
+    if (showPerDoor) {
+      // 🚀 DRAW ONE LINE PER DOOR (Total Visitors)
+      int colorIndex = 0;
+      for (String door in plottedDoors) {
+        List<FlSpot> spots = [];
+        Color doorColor = doorColors[colorIndex % doorColors.length];
+
+        for (int i = 0; i < _displayedData.length; i++) {
+          String expectedTime = _displayedData[i].time;
+          String expectedDate = _displayedData[i].date;
+
+          // Find the matching time/date slot for this specific door
+          var match = _perDoorData[door]!.where((d) => d.time == expectedTime && d.date == expectedDate).toList();
+          double total = 0;
+          if (match.isNotEmpty) {
+            total = ((match.first.inCount + match.first.outCount) / 2).toDouble();
+          }
+          spots.add(FlSpot(i.toDouble(), total));
+        }
+
+        chartLines.add(LineChartBarData(
+          spots: spots,
+          isCurved: true, color: doorColor, barWidth: 3, isStrokeCapRound: true, dotData: const FlDotData(show: false),
+        ));
+        colorIndex++;
+      }
+    } else if (_isCompareMode) {
+      // EXISTING COMPARE MODE LOGIC
       chartLines.add(LineChartBarData(
         spots: _displayedData.asMap().entries.map((e) => FlSpot(e.key.toDouble(), ((e.value.inCount + e.value.outCount) / 2).toDouble())).toList(),
-        isCurved: true, color: _accentCyan, barWidth: 4, isStrokeCapRound: true, dotData: FlDotData(show: false),
+        isCurved: true, color: _accentCyan, barWidth: 4, isStrokeCapRound: true, dotData: const FlDotData(show: false),
         belowBarData: BarAreaData(show: true, gradient: LinearGradient(colors: [_accentCyan.withOpacity(0.3), Colors.transparent], begin: Alignment.topCenter, end: Alignment.bottomCenter)),
       ));
       chartLines.add(LineChartBarData(
         spots: _compareDisplayedData.asMap().entries.map((e) => FlSpot(e.key.toDouble(), ((e.value.inCount + e.value.outCount) / 2).toDouble())).toList(),
-        isCurved: true, color: _accentGrey, barWidth: 3, dashArray: [5, 5], isStrokeCapRound: true, dotData: FlDotData(show: false),
+        isCurved: true, color: _accentGrey, barWidth: 3, dashArray: [5, 5], isStrokeCapRound: true, dotData: const FlDotData(show: false),
       ));
     } else {
+      // EXISTING IN / OUT LOGIC
       chartLines.add(LineChartBarData(
         spots: _displayedData.asMap().entries.map((e) => FlSpot(e.key.toDouble(), e.value.inCount.toDouble())).toList(),
-        isCurved: true, color: _accentCyan, barWidth: 4, isStrokeCapRound: true, dotData: FlDotData(show: false),
+        isCurved: true, color: _accentCyan, barWidth: 4, isStrokeCapRound: true, dotData: const FlDotData(show: false),
         belowBarData: BarAreaData(show: true, gradient: LinearGradient(colors: [_accentCyan.withOpacity(0.3), Colors.transparent], begin: Alignment.topCenter, end: Alignment.bottomCenter)),
       ));
       chartLines.add(LineChartBarData(
         spots: _displayedData.asMap().entries.map((e) => FlSpot(e.key.toDouble(), e.value.outCount.toDouble())).toList(),
-        isCurved: true, color: _accentMagenta, barWidth: 4, isStrokeCapRound: true, dotData: FlDotData(show: false),
+        isCurved: true, color: _accentMagenta, barWidth: 4, isStrokeCapRound: true, dotData: const FlDotData(show: false),
         belowBarData: BarAreaData(show: true, gradient: LinearGradient(colors: [_accentMagenta.withOpacity(0.3), Colors.transparent], begin: Alignment.topCenter, end: Alignment.bottomCenter)),
       ));
     }
@@ -1398,7 +1453,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ],
                   ),
                   const SizedBox(height: 16),
-                  if (_isCompareMode) ...[
+
+                  // 🚀 NEW: DYNAMIC LEGEND FOR DOORS
+                  if (showPerDoor) ...[
+                    ...plottedDoors.asMap().entries.map((entry) {
+                      Color dColor = doorColors[entry.key % doorColors.length];
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 4.0),
+                        child: Row(children: [Icon(Icons.circle, size: 10, color: dColor), const SizedBox(width: 8), Text("${entry.value.toUpperCase()} Total", style: const TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600))]),
+                      );
+                    }).toList(),
+                  ] else if (_isCompareMode) ...[
                     Row(children: [Icon(Icons.circle, size: 10, color: _accentCyan), const SizedBox(width: 8), Text(_isFrench ? 'Actuel' : 'Current', style: const TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600))]),
                     const SizedBox(height: 4),
                     Row(children: [Icon(Icons.circle, size: 10, color: _accentGrey), const SizedBox(width: 8), Text(_isFrench ? 'Précédent' : 'Previous', style: const TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600))]),
@@ -1423,28 +1488,80 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     getTooltipItems: (touchedSpots) {
                       return touchedSpots.map((LineBarSpot touchedSpot) {
                         final textStyle = TextStyle(color: touchedSpot.bar.color ?? Colors.white, fontWeight: FontWeight.bold, fontSize: 14);
-                        String timeText = _displayedData.length > touchedSpot.x.toInt() ? _displayedData[touchedSpot.x.toInt()].time : "";
+
+                        String timeText = "";
+                        if (_displayedData.length > touchedSpot.x.toInt()) {
+                          if (_currentFilter == ChartFilter.daily) {
+                            String dateStr = _displayedData[touchedSpot.x.toInt()].date;
+                            List<String> parts = dateStr.split('/');
+                            if (parts.length == 3) {
+                              DateTime dt = DateTime(int.parse(parts[2]), int.parse(parts[1]), int.parse(parts[0]));
+                              List<String> daysEn = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+                              List<String> daysFr = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
+                              String dayName = _isFrench ? daysFr[dt.weekday - 1] : daysEn[dt.weekday - 1];
+                              timeText = "$dayName, $dateStr";
+                            } else {
+                              timeText = dateStr;
+                            }
+                          } else {
+                            timeText = _displayedData[touchedSpot.x.toInt()].time;
+                          }
+                        }
+
                         String type = "";
-                        if (_isCompareMode) { type = touchedSpot.barIndex == 0 ? (_isFrench ? "Actuel: " : "Current: ") : (_isFrench ? "Précédent: " : "Previous: "); }
-                        else { type = touchedSpot.barIndex == 0 ? (_isFrench ? "Entrées: " : "In: ") : (_isFrench ? "Sorties: " : "Out: "); }
+                        // 🚀 NEW: DYNAMIC TOOLTIPS FOR DOORS
+                        if (showPerDoor) {
+                          if (touchedSpot.barIndex < plottedDoors.length) {
+                            type = "${plottedDoors[touchedSpot.barIndex].toUpperCase()} Total: ";
+                          }
+                        } else if (_isCompareMode) {
+                          type = touchedSpot.barIndex == 0 ? (_isFrench ? "Actuel: " : "Current: ") : (_isFrench ? "Précédent: " : "Previous: ");
+                        } else {
+                          type = touchedSpot.barIndex == 0 ? (_isFrench ? "Entrées: " : "In: ") : (_isFrench ? "Sorties: " : "Out: ");
+                        }
+
                         return LineTooltipItem("$timeText\n$type${touchedSpot.y.toInt()}", textStyle);
                       }).toList();
                     },
                   ),
                 ),
-                gridData: FlGridData(show: false),
+                gridData: const FlGridData(show: false),
                 titlesData: FlTitlesData(
-                  rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                  topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                  leftTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
                   bottomTitles: AxisTitles(
                     sideTitles: SideTitles(
-                      showTitles: true, reservedSize: 32, interval: 1,
+                      showTitles: true, reservedSize: 46, interval: 1,
                       getTitlesWidget: (value, meta) {
                         int index = value.toInt();
                         if (index >= 0 && index < _displayedData.length) {
-                          if (_displayedData.length > 12 && index % 2 != 0) return const SizedBox.shrink();
-                          return Padding(padding: const EdgeInsets.only(top: 10.0), child: Text(_displayedData[index].time, style: const TextStyle(color: Colors.white38, fontSize: 12, fontWeight: FontWeight.bold)));
+                          String displayText = "";
+                          if (_currentFilter == ChartFilter.daily) {
+                            String dateStr = _displayedData[index].date;
+                            List<String> parts = dateStr.split('/');
+                            if (parts.length == 3) {
+                              DateTime dt = DateTime(int.parse(parts[2]), int.parse(parts[1]), int.parse(parts[0]));
+                              List<String> shortDaysEn = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+                              List<String> shortDaysFr = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+                              String shortDay = _isFrench ? shortDaysFr[dt.weekday - 1] : shortDaysEn[dt.weekday - 1];
+                              String shortDate = dateStr.substring(0, 5);
+                              displayText = "$shortDay\n$shortDate";
+                            } else {
+                              displayText = dateStr.substring(0, 5);
+                            }
+                          } else {
+                            displayText = _displayedData[index].time;
+                          }
+
+                          return Padding(
+                              padding: const EdgeInsets.only(top: 8.0),
+                              child: Text(
+                                  displayText,
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold)
+                              )
+                          );
                         }
                         return const SizedBox.shrink();
                       },
