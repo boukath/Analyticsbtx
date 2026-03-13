@@ -37,6 +37,27 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
+  # Tool for generating app icons across all platforms
+  flutter_launcher_icons: ^0.13.1
+
+# --- FLUTTER LAUNCHER ICONS CONFIGURATION ---
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/app_icon.png"
+  min_sdk_size: 21
+  web:
+    generate: true
+    image_path: "assets/app_icon.png"
+    background_color: "#0F172A"
+    theme_color: "#0F172A"
+  windows:
+    generate: true
+    image_path: "assets/app_icon.png"
+    icon_size: 48
+  macos:
+    generate: true
+    image_path: "assets/app_icon.png"
 
 flutter:
   # Ensures that the Material Design icons are included
@@ -44,6 +65,4 @@ flutter:
   generate: true
   assets:
     - assets/boitex_logo.png
-
-
-
+    - assets/app_icon.png

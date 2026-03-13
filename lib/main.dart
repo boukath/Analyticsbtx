@@ -4,22 +4,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'l10n/app_localizations.dart';
 
-import 'screens/dashboard_screen.dart';
-import 'services/b2_cloud_service.dart';
-import 'services/ftp_service.dart';
+// --- ADDED: Import your new splash screen ---
+import 'screens/splash_screen.dart';
 
-// NEW: A global navigator key so background services can show emergency popups anywhere!
+// A global navigator key so background services can show emergency popups anywhere!
 final GlobalKey<NavigatorState> globalNavigatorKey = GlobalKey<NavigatorState>();
 
-void main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // WAKE UP BACKGROUND SERVICES GLOBALLY
-  await B2CloudService.initialize();
-  await FtpService.autoStart();
-
-  // Start the background IP security monitor
-  FtpService.startIpMonitor(globalNavigatorKey);
+  // 🚀 The heavy initialization (FTP and Cloud sync) has been moved
+  // into splash_screen.dart so the UI paints instantly!
 
   runApp(const MyApp());
 }
@@ -31,7 +26,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       navigatorKey: globalNavigatorKey, // Attach the global key here!
-      title: 'Store Traffic Analytics',
+      title: 'BoitexInfo Analytics',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         primarySwatch: Colors.blue,
@@ -39,7 +34,7 @@ class MyApp extends StatelessWidget {
         useMaterial3: true,
       ),
 
-      // --- NEW: Localization Settings ---
+      // --- Localization Settings ---
       localizationsDelegates: const [
         AppLocalizations.delegate,
         GlobalMaterialLocalizations.delegate,
@@ -52,7 +47,8 @@ class MyApp extends StatelessWidget {
       ],
       // ---------------------------------
 
-      home: const DashboardScreen(),
+      // 🚀 Changed from DashboardScreen() to SplashScreen()
+      home: const SplashScreen(),
     );
   }
 }
