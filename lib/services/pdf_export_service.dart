@@ -16,7 +16,11 @@ class PdfExportService {
     required int totalIn,
     required int totalOut,
     required String peakHour,
-    required String outputPath, // 🚀 NEW: We now require an exact file path to save it silently
+    required String outputPath,
+    // 🚀 NEW: STORE PROFILE PARAMETERS
+    required String storeName,
+    required String storeLocation,
+    String? storeLogoPath,
     // 🚀 POS PARAMETERS
     required double revenue,
     required int clients,
@@ -27,7 +31,7 @@ class PdfExportService {
     // 1. Create a new PDF document
     final pdf = pw.Document(
       title: 'Traffic Analytics Report - $reportType',
-      author: 'Retail Intelligence System',
+      author: storeName, // Updated to use the dynamic store name
     );
 
     // 2. Define our premium corporate colors
@@ -36,7 +40,16 @@ class PdfExportService {
     final PdfColor textLight = PdfColor.fromHex('#FFFFFF');
     final PdfColor textDark = PdfColor.fromHex('#333333');
 
-    // 3. Build the PDF pages
+    // 🚀 3. Load the Store Logo if it exists
+    pw.MemoryImage? logoImage;
+    if (storeLogoPath != null && storeLogoPath.isNotEmpty) {
+      final file = File(storeLogoPath);
+      if (file.existsSync()) {
+        logoImage = pw.MemoryImage(file.readAsBytesSync());
+      }
+    }
+
+    // 4. Build the PDF pages
     pdf.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
@@ -50,14 +63,42 @@ class PdfExportService {
               pw.Row(
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                 children: [
-                  pw.Column(
-                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  pw.Row(
                     children: [
-                      pw.Text('RETAIL INTELLIGENCE', style: pw.TextStyle(color: accentColor, fontSize: 10, letterSpacing: 2, fontWeight: pw.FontWeight.bold)),
-                      pw.SizedBox(height: 4),
-                      pw.Text('Traffic Analytics Report', style: pw.TextStyle(color: primaryColor, fontSize: 24, fontWeight: pw.FontWeight.bold)),
+                      // Render the logo if available
+                      if (logoImage != null) ...[
+                        pw.Container(
+                          width: 50,
+                          height: 50,
+                          decoration: pw.BoxDecoration(
+                            shape: pw.BoxShape.circle,
+                            image: pw.DecorationImage(image: logoImage, fit: pw.BoxFit.cover),
+                          ),
+                        ),
+                        pw.SizedBox(width: 16),
+                      ],
+                      // Store Name & Location
+                      pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
+                        children: [
+                          pw.Text(
+                              storeName.toUpperCase(),
+                              style: pw.TextStyle(color: accentColor, fontSize: 12, letterSpacing: 2, fontWeight: pw.FontWeight.bold)
+                          ),
+                          pw.Text(
+                              storeLocation,
+                              style: const pw.TextStyle(color: PdfColors.grey700, fontSize: 10)
+                          ),
+                          pw.SizedBox(height: 4),
+                          pw.Text(
+                              'Traffic Analytics Report',
+                              style: pw.TextStyle(color: primaryColor, fontSize: 24, fontWeight: pw.FontWeight.bold)
+                          ),
+                        ],
+                      ),
                     ],
                   ),
+                  // Camera/Door Badge
                   pw.Container(
                     padding: const pw.EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: pw.BoxDecoration(color: primaryColor, borderRadius: const pw.BorderRadius.all(pw.Radius.circular(8))),
@@ -103,7 +144,7 @@ class PdfExportService {
                 _buildPdfSummaryCard('TOTAL VISITORS', totalVisitors.toString(), primaryColor, accentColor),
                 _buildPdfSummaryCard('PEAK HOUR', peakHour, primaryColor, textLight),
 
-                // 🚀 NEW: POS METRIC CARDS
+                // POS METRIC CARDS
                 _buildPdfSummaryCard('REVENUE', '${revenue.toStringAsFixed(0)} DZD', PdfColor.fromHex('#E8F5E9'), PdfColor.fromHex('#2E7D32')),
                 _buildPdfSummaryCard('CLIENTS', clients.toString(), PdfColor.fromHex('#F3E5F5'), PdfColor.fromHex('#6A1B9A')),
                 _buildPdfSummaryCard('CONV RATE', '${conversionRate.toStringAsFixed(1)}%', PdfColor.fromHex('#FFF3E0'), PdfColor.fromHex('#EF6C00')),
@@ -145,7 +186,7 @@ class PdfExportService {
       ),
     );
 
-    // 🚀 4. NEW: SILENTLY SAVE THE FILE TO THE DISK
+    // 5. SILENTLY SAVE THE FILE TO THE DISK
     final File file = File(outputPath);
     final Uint8List bytes = await pdf.save();
     await file.writeAsBytes(bytes);

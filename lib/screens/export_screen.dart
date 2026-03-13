@@ -121,8 +121,14 @@ class _ExportScreenState extends State<ExportScreen> {
     avgBasket = totalClients > 0 ? (totalRevenue / totalClients) : 0.0;
     upt = totalClients > 0 ? (totalArticles / totalClients) : 0.0;
 
-    // 🚀 3. DIRECTORY MANAGEMENT
+    // 🚀 3. DIRECTORY & PREFERENCES MANAGEMENT
     final prefs = await SharedPreferences.getInstance();
+
+    // Get the Store Profile Data for the PDF
+    String storeName = prefs.getString('store_name') ?? "My Store";
+    String storeLocation = prefs.getString('store_location') ?? "MAIN BRANCH";
+    String? storeLogoPath = prefs.getString('store_logo_path');
+
     // Get the base folder, default to C:\comptage if none exists
     String baseDir = prefs.getString('saved_data_folder') ?? 'C:\\comptage';
     String reportsDirPath = '$baseDir${Platform.pathSeparator}Reports';
@@ -166,7 +172,12 @@ class _ExportScreenState extends State<ExportScreen> {
         totalIn: totalIn,
         totalOut: totalOut,
         peakHour: peakHour,
-        outputPath: fullPdfPath, // Pass the direct path!
+        outputPath: fullPdfPath,
+        // 🚀 PASSED STORE PROFILE DATA HERE
+        storeName: storeName,
+        storeLocation: storeLocation,
+        storeLogoPath: storeLogoPath,
+        // POS Data
         revenue: totalRevenue,
         clients: totalClients,
         conversionRate: conversionRate,
