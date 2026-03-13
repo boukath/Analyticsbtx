@@ -4,6 +4,8 @@ import 'dart:ui';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data'; // 🚀 NEW: Required for manual camera bytes
+import 'package:flutter/foundation.dart'; // 🚀 NEW: Required for HTTP streaming
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:fl_chart/fl_chart.dart';
@@ -16,6 +18,7 @@ import '../services/folder_scanner_service.dart';
 import '../core/data_aggregator.dart';
 import '../services/pdf_export_service.dart';
 import '../services/csv_export_service.dart';
+import 'camera_ftp_setup_screen.dart';
 
 enum ChartFilter { hourly, daily }
 
@@ -35,9 +38,75 @@ class _DashboardScreenState extends State<DashboardScreen> {
   ChartFilter _currentFilter = ChartFilter.hourly;
   DateTimeRange? _selectedDateRange;
 
+  // 🚀 NEW: The Dialog to link an IP directly to the selected Door/Zone
+  void _showLinkIpDialog(String cameraName) {
+    TextEditingController ipController = TextEditingController(text: _cameraIps[cameraName]);
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: _cardDark,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: BorderSide(color: Colors.white.withOpacity(0.1))),
+        title: Row(
+          children: [
+            Icon(Icons.link, color: _accentCyan),
+            const SizedBox(width: 12),
+            Text('Link IP to ${cameraName.toUpperCase()}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Enter the Camera IP Address or Link:', style: TextStyle(color: Colors.white54, fontSize: 14)),
+            const SizedBox(height: 16),
+            TextField(
+              controller: ipController,
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+              decoration: InputDecoration(
+                hintText: 'e.g. 192.168.1.7',
+                hintStyle: const TextStyle(color: Colors.white24),
+                filled: true,
+                fillColor: _bgDark,
+                prefixIcon: Icon(Icons.router, color: _accentCyan),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('CANCEL', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: _accentCyan, foregroundColor: Colors.black),
+            onPressed: () async {
+              String newIp = ipController.text.trim();
+              final prefs = await SharedPreferences.getInstance();
+
+              // Saves the IP securely to the exact folder/door name
+              await prefs.setString('ip_$cameraName', newIp);
+
+              setState(() {
+                _cameraIps[cameraName] = newIp;
+              });
+
+              if (context.mounted) Navigator.pop(context);
+            },
+            child: const Text('SAVE IP', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
   Timer? _autoRefreshTimer;
   String _localIp = "";
   bool _isFtpRunning = false;
+
+  // --- LIVE FEED STATE ---
+  Map<String, String> _cameraIps = {};
 
   // --- IP Security Variables ---
   Timer? _securityTimer;
@@ -94,12 +163,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void initState() {
     super.initState();
     _loadLanguagePref();
-    _loadWorkingHoursPref(); // Load custom working hours
+    _loadWorkingHoursPref();
     _loadStoreProfile();
     _loadPosDatabase();
     _loadSavedFolder();
     _checkFtpStatus();
     _startSecurityMonitor();
+    _loadCameraIps();
   }
 
   @override
@@ -110,7 +180,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
     super.dispose();
   }
 
-  // --- Load Working Hours ---
+  // 🚀 NEW: Load IPs from Storage
+  Future<void> _loadCameraIps() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      final keys = prefs.getKeys();
+      for(String key in keys) {
+        if (key.startsWith('ip_')) {
+          String camName = key.substring(3);
+          _cameraIps[camName] = prefs.getString(key) ?? '';
+        }
+      }
+    });
+  }
+
   Future<void> _loadWorkingHoursPref() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
@@ -119,7 +202,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
   }
 
-  // --- Load & Save Language Preferences ---
   Future<void> _loadLanguagePref() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
@@ -150,7 +232,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  // --- Security Monitor ---
   void _startSecurityMonitor() {
     _securityTimer = Timer.periodic(const Duration(seconds: 10), (timer) async {
       final prefs = await SharedPreferences.getInstance();
@@ -177,7 +258,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
   }
 
-  // --- Aggressive Password Alert Dialog ---
   void _showPasswordAlertDialog() {
     _isAlertDialogOpen = true;
     TextEditingController passCtrl = TextEditingController();
@@ -404,14 +484,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
       List<PeopleCount> filteredData = _rawData.where((item) {
         if (_selectedCamera != 'All Doors' && item.doorName != _selectedCamera) return false;
 
-        // --- NEW: EXACT MINUTE OPERATING HOURS FILTER ---
         var timeParts = item.time.split(':');
         int hour = timeParts.isNotEmpty ? (int.tryParse(timeParts[0]) ?? 0) : 0;
         int minute = timeParts.length > 1 ? (int.tryParse(timeParts[1]) ?? 0) : 0;
         int totalMinutes = (hour * 60) + minute;
 
         if (totalMinutes < _workingMinuteStart || totalMinutes > _workingMinuteEnd) return false;
-        // ------------------------------------------------
 
         if (_selectedDateRange == null) return true;
         var dateParts = item.date.split('/');
@@ -424,12 +502,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if (_currentFilter == ChartFilter.daily) _displayedData = DataAggregator.aggregateByDay(filteredData);
       else _displayedData = DataAggregator.aggregateByHour(filteredData);
 
-      // --- 🚀 NEW: SPLIT DATA PER DOOR FOR THE "ALL DOORS" CHART ---
       _perDoorData.clear();
-      // Only do this if "All Doors" is selected, we have more than 1 camera, and we aren't in compare mode.
       if (_selectedCamera == 'All Doors' && _availableCameras.length > 2 && !_isCompareMode) {
         for (String door in _availableCameras) {
-          if (door == 'All Doors') continue; // Skip the "All Doors" label itself
+          if (door == 'All Doors') continue;
 
           var doorSpecificData = filteredData.where((item) => item.doorName == door).toList();
           if (_currentFilter == ChartFilter.daily) {
@@ -457,14 +533,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
         List<PeopleCount> compareFilteredData = _rawData.where((item) {
           if (_selectedCamera != 'All Doors' && item.doorName != _selectedCamera) return false;
 
-          // --- EXACT MINUTE OPERATING HOURS FILTER (For Compare Mode) ---
           var timeParts = item.time.split(':');
           int hour = timeParts.isNotEmpty ? (int.tryParse(timeParts[0]) ?? 0) : 0;
           int minute = timeParts.length > 1 ? (int.tryParse(timeParts[1]) ?? 0) : 0;
           int totalMinutes = (hour * 60) + minute;
 
           if (totalMinutes < _workingMinuteStart || totalMinutes > _workingMinuteEnd) return false;
-          // --------------------------------------------------------------
 
           var dateParts = item.date.split('/');
           if (dateParts.length != 3) return true;
@@ -523,14 +597,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   String _formatDateOnly(DateTime d) => "${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
 
-  // Helper formatting total minutes back to HH:MM strings
   String _formatMinutesToTimeString(int totalMinutes) {
     int h = totalMinutes ~/ 60;
     int m = totalMinutes % 60;
     return "${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}";
   }
 
-  // --- NEW: THE PREMIUM TIME PICKER DIALOG ---
   void _showWorkingHoursDialog() {
     TimeOfDay startTime = TimeOfDay(hour: _workingMinuteStart ~/ 60, minute: _workingMinuteStart % 60);
     TimeOfDay endTime = TimeOfDay(hour: _workingMinuteEnd ~/ 60, minute: _workingMinuteEnd % 60);
@@ -541,7 +613,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
           return StatefulBuilder(
               builder: (context, setDialogState) {
 
-                // Reusable widget for selecting time
                 Widget _buildTimeButton(String label, TimeOfDay time, bool isStart) {
                   return Expanded(
                     child: InkWell(
@@ -631,7 +702,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         int startMins = startTime.hour * 60 + startTime.minute;
                         int endMins = endTime.hour * 60 + endTime.minute;
 
-                        // Validation check
                         if (startMins >= endMins) {
                           ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_isFrench ? "L'heure de fin doit être après l'heure de début." : "Closing time must be after opening time."), backgroundColor: Colors.redAccent));
                           return;
@@ -897,7 +967,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  // --- The iOS 26 Style Animated Language Toggle ---
   Widget _buildLanguageToggle() {
     return GestureDetector(
       onTap: _toggleLanguage,
@@ -964,12 +1033,96 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  // 🚀 MODIFIED: Embeds the custom CameraStreamWidget instead of failing silently
+  Widget _buildLiveFeedSection() {
+    if (_selectedCamera == 'All Doors') return const SizedBox.shrink();
+
+    String? ip = _cameraIps[_selectedCamera];
+    bool hasIp = ip != null && ip.isNotEmpty;
+
+    return Container(
+      margin: const EdgeInsets.only(top: 32),
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: _cardDark,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: _accentCyan.withOpacity(0.3), width: 1.5),
+        boxShadow: [
+          BoxShadow(color: _accentCyan.withOpacity(0.05), blurRadius: 20)
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.fiber_manual_record, color: hasIp ? Colors.redAccent : Colors.grey, size: 16),
+                  const SizedBox(width: 8),
+                  Text(
+                      hasIp ? 'LIVE PREVIEW - ${_selectedCamera.toUpperCase()}' : 'NO IP CONFIGURED FOR ${_selectedCamera.toUpperCase()}',
+                      style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold, letterSpacing: 1.5)
+                  ),
+                ],
+              ),
+              if (hasIp)
+                IconButton(
+                  icon: const Icon(Icons.edit, color: Colors.white54, size: 20),
+                  tooltip: 'Edit Camera IP',
+                  onPressed: () => _showLinkIpDialog(_selectedCamera),
+                ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          if (!hasIp)
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.all(32.0),
+                child: Column(
+                  children: [
+                    const Icon(Icons.videocam_off, color: Colors.white24, size: 48),
+                    const SizedBox(height: 16),
+                    Text('No IP assigned to $_selectedCamera.', style: const TextStyle(color: Colors.white54)),
+                    const SizedBox(height: 24),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                          backgroundColor: _accentCyan,
+                          foregroundColor: Colors.black,
+                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12)
+                      ),
+                      onPressed: () => _showLinkIpDialog(_selectedCamera),
+                      icon: const Icon(Icons.link),
+                      label: const Text('LINK CAMERA IP', style: TextStyle(fontWeight: FontWeight.bold)),
+                    )
+                  ],
+                ),
+              ),
+            )
+          else
+            ClipRRect(
+              borderRadius: BorderRadius.circular(16),
+              child: Container(
+                width: double.infinity,
+                height: 360,
+                color: Colors.black,
+                // 🚀 Uses our new bulletproof custom engine
+                child: CameraStreamWidget(ipAddress: ip),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDesktop = MediaQuery.of(context).size.width > 800;
 
     return Scaffold(
-      backgroundColor: _bgDark, // PREMIUM DARK BACKGROUND
+      backgroundColor: _bgDark,
       body: Row(
         children: [
           if (isDesktop) _buildSidebar(),
@@ -979,7 +1132,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
               children: [
                 _buildTopAppBar(),
 
-                // The Passive Security Banner
                 if (_isIpMismatch)
                   Container(
                     width: double.infinity,
@@ -1029,6 +1181,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           const SizedBox(height: 32),
                           _buildZoneSelector(),
                           const SizedBox(height: 32),
+
+                          _buildLiveFeedSection(),
+
+                          const SizedBox(height: 32),
                           _buildBentoGrid(isDesktop),
                           const SizedBox(height: 40),
                         ]
@@ -1047,7 +1203,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _buildSidebar() {
     return Container(
       width: 260,
-      color: _cardDark, // Premium Slate 800
+      color: _cardDark,
       child: Column(
         children: [
           const SizedBox(height: 40),
@@ -1063,6 +1219,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
           _buildSidebarItem(Icons.dashboard, _isFrench ? 'Tableau de bord' : 'Dashboard', isActive: true),
           _buildSidebarItem(Icons.source, _isFrench ? 'Source de données' : 'Data Source', onTap: _pickFolderAndLoadData),
+          _buildSidebarItem(Icons.videocam, _isFrench ? 'Config. Caméras' : 'Camera Setup', onTap: () {
+            Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const CameraFtpSetupScreen())
+            ).then((_) {
+              _loadCameraIps();
+              if (mounted) setState(() {});
+            });
+          }),
 
           _buildSidebarItem(
               Icons.wifi_tethering,
@@ -1093,7 +1258,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 children: [
                   Row(children: [Icon(Icons.circle, color: Colors.greenAccent, size: 12), const SizedBox(width: 8), Text(_isFrench ? 'FTP Actif' : 'FTP Active', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white))]),
                   const SizedBox(height: 8),
-                  Text('ftp://$_localIp:2121', style: const TextStyle(fontSize: 12, color: Colors.white70)),
+                  Text('ftp://$_localIp:21', style: const TextStyle(fontSize: 12, color: Colors.white70)),
                 ],
               ),
             ),
@@ -1251,7 +1416,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             const SizedBox(width: 16),
 
-            // --- THE NEW OPERATING HOURS FILTER BUTTON ---
             Container(
               decoration: BoxDecoration(
                   color: isFilterActive ? _accentCyan.withOpacity(0.1) : _cardDark,
@@ -1302,7 +1466,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _buildSmartInsights() {
     int totalVisitors = (_totalIn + _totalOut) ~/ 2;
 
-    // Convert the working hours to strings for the insight banner
     String startStr = _formatMinutesToTimeString(_workingMinuteStart);
     String endStr = _formatMinutesToTimeString(_workingMinuteEnd);
     bool isFilterActive = _workingMinuteStart > 0 || _workingMinuteEnd < 1439;
@@ -1335,13 +1498,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _buildHeroChart() {
     int totalVisitors = (_totalIn + _totalOut) ~/ 2;
-
     List<LineChartBarData> chartLines = [];
 
-    // 🚀 NEW: Check if we should show the multi-door colored lines
     bool showPerDoor = _selectedCamera == 'All Doors' && _availableCameras.length > 2 && !_isCompareMode;
 
-    // A palette of premium neon colors for the different doors
     List<Color> doorColors = [
       Colors.blueAccent, Colors.redAccent, Colors.greenAccent,
       Colors.orangeAccent, Colors.purpleAccent, Colors.tealAccent,
@@ -1350,7 +1510,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     List<String> plottedDoors = _perDoorData.keys.toList();
 
     if (showPerDoor) {
-      // 🚀 DRAW ONE LINE PER DOOR (Total Visitors)
       int colorIndex = 0;
       for (String door in plottedDoors) {
         List<FlSpot> spots = [];
@@ -1359,8 +1518,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         for (int i = 0; i < _displayedData.length; i++) {
           String expectedTime = _displayedData[i].time;
           String expectedDate = _displayedData[i].date;
-
-          // Find the matching time/date slot for this specific door
           var match = _perDoorData[door]!.where((d) => d.time == expectedTime && d.date == expectedDate).toList();
           double total = 0;
           if (match.isNotEmpty) {
@@ -1376,7 +1533,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         colorIndex++;
       }
     } else if (_isCompareMode) {
-      // EXISTING COMPARE MODE LOGIC
       chartLines.add(LineChartBarData(
         spots: _displayedData.asMap().entries.map((e) => FlSpot(e.key.toDouble(), ((e.value.inCount + e.value.outCount) / 2).toDouble())).toList(),
         isCurved: true, color: _accentCyan, barWidth: 4, isStrokeCapRound: true, dotData: const FlDotData(show: false),
@@ -1387,7 +1543,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         isCurved: true, color: _accentGrey, barWidth: 3, dashArray: [5, 5], isStrokeCapRound: true, dotData: const FlDotData(show: false),
       ));
     } else {
-      // EXISTING IN / OUT LOGIC
       chartLines.add(LineChartBarData(
         spots: _displayedData.asMap().entries.map((e) => FlSpot(e.key.toDouble(), e.value.inCount.toDouble())).toList(),
         isCurved: true, color: _accentCyan, barWidth: 4, isStrokeCapRound: true, dotData: const FlDotData(show: false),
@@ -1454,7 +1609,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                   const SizedBox(height: 16),
 
-                  // 🚀 NEW: DYNAMIC LEGEND FOR DOORS
                   if (showPerDoor) ...[
                     ...plottedDoors.asMap().entries.map((entry) {
                       Color dColor = doorColors[entry.key % doorColors.length];
@@ -1509,7 +1663,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         }
 
                         String type = "";
-                        // 🚀 NEW: DYNAMIC TOOLTIPS FOR DOORS
                         if (showPerDoor) {
                           if (touchedSpot.barIndex < plottedDoors.length) {
                             type = "${plottedDoors[touchedSpot.barIndex].toUpperCase()} Total: ";
@@ -1541,27 +1694,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
                           String displayText = "";
 
-                          // ==========================================
-                          // 🛠️ THE PRO HOURLY VIEW LOGIC
-                          // ==========================================
                           if (_currentFilter == ChartFilter.hourly) {
-                            // SKIP LABELS to prevent crowding:
-                            // If we have a lot of hours, only show every 2nd or 3rd label
                             int step = _displayedData.length > 16 ? 3 : (_displayedData.length > 10 ? 2 : 1);
-
                             if (index % step != 0 && index != _displayedData.length - 1) {
-                              return const SizedBox.shrink(); // Hide this label
+                              return const SizedBox.shrink();
                             }
-
-                            // Format "14:00" into a sleek "14h" to save horizontal space
                             String rawTime = _displayedData[index].time;
                             displayText = "${rawTime.split(':')[0]}h";
 
-                          }
-                          // ==========================================
-                          // THE EXISTING DAILY VIEW LOGIC
-                          // ==========================================
-                          else {
+                          } else {
                             String dateStr = _displayedData[index].date;
                             List<String> parts = dateStr.split('/');
                             if (parts.length == 3) {
@@ -1748,6 +1889,180 @@ class _DashboardScreenState extends State<DashboardScreen> {
               const SizedBox(height: 8),
               Text(value, style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: -0.5)),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// =========================================================================
+// 🚀 THE NEW CUSTOM IP CAMERA STREAM ENGINE
+// =========================================================================
+class CameraStreamWidget extends StatefulWidget {
+  final String ipAddress;
+  const CameraStreamWidget({Key? key, required this.ipAddress}) : super(key: key);
+
+  @override
+  State<CameraStreamWidget> createState() => _CameraStreamWidgetState();
+}
+
+class _CameraStreamWidgetState extends State<CameraStreamWidget> {
+  Timer? _timer;
+  Uint8List? _lastFrame;
+  String _status = "Initializing...";
+  bool _isError = false;
+  bool _isDisposed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchFrame();
+    // Safely polls the camera without causing loading overlap
+    _timer = Timer.periodic(const Duration(milliseconds: 1500), (_) {
+      if (!_isDisposed) _fetchFrame();
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant CameraStreamWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Restart if user changes the IP via the dialog
+    if (oldWidget.ipAddress != widget.ipAddress) {
+      _lastFrame = null;
+      _isError = false;
+      _status = "Reconnecting...";
+      _fetchFrame();
+    }
+  }
+
+  @override
+  void dispose() {
+    _isDisposed = true;
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _fetchFrame() async {
+    if (_isDisposed) return;
+
+    // Remove any trailing slashes the user might have accidentally typed
+    String cleanIp = widget.ipAddress.trim().replaceAll(RegExp(r'/$'), '');
+    String targetUrl;
+
+    if (cleanIp.contains('/api/getpreview')) {
+      // 🚀 Smart Fix: If you pasted the FULL url, we just update the timestamp
+      targetUrl = cleanIp.startsWith('http') ? cleanIp : 'http://$cleanIp';
+      if (targetUrl.contains(RegExp(r'&\d+$'))) {
+        targetUrl = targetUrl.replaceAll(RegExp(r'&\d+$'), '&${DateTime.now().millisecondsSinceEpoch}');
+      } else {
+        targetUrl = "$targetUrl&${DateTime.now().millisecondsSinceEpoch}";
+      }
+    } else {
+      // 🚀 Just the IP: we build the correct path
+      String baseUrl = cleanIp.startsWith('http') ? cleanIp : 'http://$cleanIp';
+      targetUrl = "$baseUrl/api/getpreview/?w=320&h=240&${DateTime.now().millisecondsSinceEpoch}";
+    }
+
+    try {
+      HttpClient client = HttpClient();
+      client.connectionTimeout = const Duration(seconds: 2);
+      client.badCertificateCallback = (cert, host, port) => true; // Bypass local network SSL issues
+
+      final request = await client.getUrl(Uri.parse(targetUrl));
+      // Fake a Windows browser so the camera doesn't reject us
+      request.headers.set(HttpHeaders.userAgentHeader, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)');
+      request.headers.set(HttpHeaders.acceptHeader, 'image/jpeg,image/png,*/*');
+
+      final response = await request.close().timeout(const Duration(seconds: 3));
+
+      if (response.statusCode == 200) {
+        final bytes = await consolidateHttpClientResponseBytes(response);
+        if (!_isDisposed && bytes.isNotEmpty) {
+          setState(() {
+            _lastFrame = bytes;
+            _isError = false;
+            _status = "Connected";
+          });
+        }
+      } else {
+        if (!_isDisposed) {
+          setState(() {
+            _isError = true;
+            _status = "Camera HTTP Error: ${response.statusCode}";
+          });
+        }
+      }
+    } catch (e) {
+      if (!_isDisposed) {
+        setState(() {
+          _isError = true;
+          String err = e.toString();
+          if (err.contains("Timeout")) {
+            _status = "Connection Timed Out";
+          } else if (err.contains("SocketException")) {
+            _status = "Network unreachable (Check IP)";
+          } else {
+            _status = "Error: ${err.split('\n').first}";
+          }
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_lastFrame != null) {
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          Image.memory(
+            _lastFrame!,
+            fit: BoxFit.contain,
+            width: double.infinity,
+            height: double.infinity,
+            gaplessPlayback: true, // Prevents screen flickering between frames
+          ),
+          if (_isError)
+            Positioned(
+              top: 8,
+              right: 8,
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(8)),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.warning, color: Colors.redAccent, size: 16),
+                    const SizedBox(width: 8),
+                    Text(_status, style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      );
+    }
+
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          if (_isError) const Icon(Icons.videocam_off, color: Colors.redAccent, size: 48)
+          else const CircularProgressIndicator(color: Color(0xFF06B6D4)),
+          const SizedBox(height: 16),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Text(
+              _status,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: _isError ? Colors.redAccent : Colors.white54, fontWeight: FontWeight.bold),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            widget.ipAddress,
+            style: const TextStyle(color: Colors.white24, fontSize: 11),
           ),
         ],
       ),
