@@ -42,5 +42,8 @@ flutter:
   # Ensures that the Material Design icons are included
   uses-material-design: true
   generate: true
+  assets:
+    - assets/boitex_logo.png
+
 
 

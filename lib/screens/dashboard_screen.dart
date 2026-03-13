@@ -4,8 +4,8 @@ import 'dart:ui';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data'; // 🚀 NEW: Required for manual camera bytes
-import 'package:flutter/foundation.dart'; // 🚀 NEW: Required for HTTP streaming
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:fl_chart/fl_chart.dart';
@@ -20,6 +20,8 @@ import '../services/pdf_export_service.dart';
 import '../services/csv_export_service.dart';
 import 'camera_ftp_setup_screen.dart';
 import 'export_screen.dart';
+import 'developer_screen.dart';
+
 enum ChartFilter { hourly, daily }
 
 class DashboardScreen extends StatefulWidget {
@@ -38,7 +40,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   ChartFilter _currentFilter = ChartFilter.hourly;
   DateTimeRange? _selectedDateRange;
 
-  // 🚀 NEW: The Dialog to link an IP directly to the selected Door/Zone
   void _showLinkIpDialog(String cameraName) {
     TextEditingController ipController = TextEditingController(text: _cameraIps[cameraName]);
 
@@ -85,7 +86,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
               String newIp = ipController.text.trim();
               final prefs = await SharedPreferences.getInstance();
 
-              // Saves the IP securely to the exact folder/door name
               await prefs.setString('ip_$cameraName', newIp);
 
               setState(() {
@@ -105,10 +105,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String _localIp = "";
   bool _isFtpRunning = false;
 
-  // --- LIVE FEED STATE ---
   Map<String, String> _cameraIps = {};
 
-  // --- IP Security Variables ---
   Timer? _securityTimer;
   bool _isIpMismatch = false;
   String _expectedIp = "";
@@ -117,12 +115,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   bool _isAlertSilenced = false;
   bool _isAlertDialogOpen = false;
 
-  // --- Language State ---
   bool _isFrench = false;
 
-  // --- NEW: OPERATING HOURS STATE (Stored in Total Minutes from Midnight) ---
-  int _workingMinuteStart = 0;    // Default: 00:00 (0 mins)
-  int _workingMinuteEnd = 1439;   // Default: 23:59 (1439 mins)
+  int _workingMinuteStart = 0;
+  int _workingMinuteEnd = 1439;
 
   List<String> _availableCameras = ['All Doors'];
   String _selectedCamera = 'All Doors';
@@ -152,12 +148,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   final FolderScannerService _scannerService = FolderScannerService();
 
-  // --- PREMIUM THEME COLORS ---
-  final Color _bgDark = const Color(0xFF0F172A); // Slate 900
-  final Color _cardDark = const Color(0xFF1E293B); // Slate 800
-  final Color _accentCyan = const Color(0xFF06B6D4); // Neon Cyan for IN / Active
-  final Color _accentMagenta = const Color(0xFFD946EF); // Neon Magenta for OUT
-  final Color _accentGrey = const Color(0xFF64748B); // Slate 500 for Comparisons
+  final Color _bgDark = const Color(0xFF0F172A);
+  final Color _cardDark = const Color(0xFF1E293B);
+  final Color _accentCyan = const Color(0xFF06B6D4);
+  final Color _accentMagenta = const Color(0xFFD946EF);
+  final Color _accentGrey = const Color(0xFF64748B);
 
   @override
   void initState() {
@@ -180,7 +175,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     super.dispose();
   }
 
-  // 🚀 NEW: Load IPs from Storage
   Future<void> _loadCameraIps() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
@@ -346,6 +340,102 @@ class _DashboardScreenState extends State<DashboardScreen> {
     ).then((_) {
       _isAlertDialogOpen = false;
     });
+  }
+
+  // 🚀 CLEANED UP AND FIXED: Password protection dialog for the Developer section
+  void _showDeveloperPasswordDialog() {
+    TextEditingController passCtrl = TextEditingController();
+    String errorMessage = "";
+
+    showDialog(
+        context: context,
+        builder: (BuildContext dialogContext) {
+          return StatefulBuilder(
+              builder: (context, setDialogState) {
+
+                // This function sits inside the builder, so it knows what errorMessage is!
+                void verifyPassword() async {
+                  if (passCtrl.text == "boitexinfodev") {
+                    Navigator.pop(dialogContext);
+
+                    await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (context) => DeveloperScreen(
+                              isFrench: _isFrench,
+                              onSelectDataSource: () {
+                                Navigator.pop(context);
+                                _pickFolderAndLoadData();
+                              },
+                            )
+                        )
+                    );
+
+                    _loadCameraIps();
+                    _checkFtpStatus();
+                    if (mounted) setState(() {});
+                  } else {
+                    setDialogState(() {
+                      errorMessage = _isFrench ? "Mot de passe incorrect !" : "Incorrect Passcode!";
+                    });
+                  }
+                }
+
+                return AlertDialog(
+                  backgroundColor: _cardDark,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      side: BorderSide(color: _accentCyan.withOpacity(0.5))
+                  ),
+                  title: Row(
+                    children: [
+                      Icon(Icons.lock_outline, color: _accentCyan),
+                      const SizedBox(width: 12),
+                      Text(
+                          _isFrench ? "Accès Développeur" : "Developer Access",
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)
+                      ),
+                    ],
+                  ),
+                  content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _isFrench ? "Veuillez entrer le mot de passe :" : "Please enter the passcode:",
+                        style: const TextStyle(color: Colors.white70, fontSize: 14),
+                      ),
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: passCtrl,
+                        obscureText: true,
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, letterSpacing: 2),
+                        decoration: InputDecoration(
+                          filled: true,
+                          fillColor: _bgDark,
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                          errorText: errorMessage.isNotEmpty ? errorMessage : null,
+                        ),
+                        onSubmitted: (_) => verifyPassword(),
+                      ),
+                    ],
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(dialogContext),
+                      child: Text(_isFrench ? "ANNULER" : "CANCEL", style: const TextStyle(color: Colors.white54)),
+                    ),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(backgroundColor: _accentCyan, foregroundColor: Colors.black),
+                      onPressed: verifyPassword,
+                      child: Text(_isFrench ? "VALIDER" : "SUBMIT", style: const TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ],
+                );
+              }
+          );
+        }
+    );
   }
 
   Future<void> _loadStoreProfile() async {
@@ -590,8 +680,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
     List<String> monthsFr = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc'];
     List<String> months = _isFrench ? monthsFr : monthsEn;
 
+    List<String> weekdaysEn = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    List<String> weekdaysFr = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
+    List<String> weekdays = _isFrench ? weekdaysFr : weekdaysEn;
+
     DateTime start = _selectedDateRange!.start, end = _selectedDateRange!.end;
-    if (start.isAtSameMomentAs(end) || end.difference(start).inDays == 0) return "${months[start.month - 1]} ${start.day}, ${start.year}";
+
+    if (start.isAtSameMomentAs(end) || end.difference(start).inDays == 0) {
+      String dayName = weekdays[start.weekday - 1];
+
+      if (_isFrench) {
+        return "$dayName ${start.day} ${months[start.month - 1]} ${start.year}";
+      } else {
+        return "$dayName, ${months[start.month - 1]} ${start.day}, ${start.year}";
+      }
+    }
+
     return "${months[start.month - 1]} ${start.day} - ${months[end.month - 1]} ${end.day}";
   }
 
@@ -906,12 +1010,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
           isFrench: _isFrench,
           workingMinuteStart: _workingMinuteStart,
           workingMinuteEnd: _workingMinuteEnd,
-          posDatabase: _posDatabase, // 🚀 NEW: Pass the POS data!
+          posDatabase: _posDatabase,
         ),
       ),
     );
   }
-
 
   Widget _buildLanguageToggle() {
     return GestureDetector(
@@ -979,7 +1082,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // 🚀 MODIFIED: Embeds the custom CameraStreamWidget instead of failing silently
   Widget _buildLiveFeedSection() {
     if (_selectedCamera == 'All Doors') return const SizedBox.shrink();
 
@@ -1054,7 +1156,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 width: double.infinity,
                 height: 360,
                 color: Colors.black,
-                // 🚀 Uses our new bulletproof custom engine
                 child: CameraStreamWidget(ipAddress: ip),
               ),
             ),
@@ -1153,56 +1254,78 @@ class _DashboardScreenState extends State<DashboardScreen> {
       child: Column(
         children: [
           const SizedBox(height: 40),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.analytics, color: _accentCyan, size: 32),
-              const SizedBox(width: 12),
-              Text(_isFrench ? 'Analytique' : 'Analytics', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: -0.5)),
-            ],
-          ),
-          const SizedBox(height: 60),
 
-          _buildSidebarItem(Icons.dashboard, _isFrench ? 'Tableau de bord' : 'Dashboard', isActive: true),
-          _buildSidebarItem(Icons.source, _isFrench ? 'Source de données' : 'Data Source', onTap: _pickFolderAndLoadData),
-          _buildSidebarItem(Icons.videocam, _isFrench ? 'Config. Caméras' : 'Camera Setup', onTap: () {
-            Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const CameraFtpSetupScreen())
-            ).then((_) {
-              _loadCameraIps();
-              if (mounted) setState(() {});
-            });
-          }),
-
-          _buildSidebarItem(
-              Icons.wifi_tethering,
-              _isFrench ? 'Serveur FTP' : 'FTP Server',
-              iconColor: _isIpMismatch ? Colors.redAccent : null,
-              textColor: _isIpMismatch ? Colors.redAccent : null,
-              onTap: () async {
-                await Navigator.push(context, MaterialPageRoute(builder: (context) => const FtpServerScreen()));
-                _checkFtpStatus();
-              }
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Image.asset(
+                  'assets/boitex_logo.png',
+                  width: 150,
+                  height: 150,
+                  fit: BoxFit.contain,
+                  errorBuilder: (context, error, stackTrace) {
+                    return Icon(Icons.business, color: _accentCyan, size: 80);
+                  },
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'BoitexInfo',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 26, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: -0.5, height: 1.1),
+                ),
+                Text(
+                  'Analytics',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: _accentCyan, letterSpacing: 2.0),
+                ),
+              ],
+            ),
           ),
 
-          _buildSidebarItem(Icons.cloud_upload, _isFrench ? 'Synchronisation Cloud' : 'Cloud Sync (B2)', onTap: () {
-            Navigator.push(context, MaterialPageRoute(builder: (context) => const CloudSyncScreen()));
-          }),
+          const SizedBox(height: 20),
 
-          _buildSidebarItem(Icons.point_of_sale, _isFrench ? 'Saisie de Caisse' : 'POS Entry', onTap: _rawData.isNotEmpty ? _showPosEntryDialog : null),
-          _buildSidebarItem(Icons.download, _isFrench ? 'Exporter Rapports' : 'Export Reports', onTap: _rawData.isNotEmpty ? _showExportMenu : null),
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  _buildSidebarItem(Icons.dashboard, _isFrench ? 'Tableau de bord' : 'Dashboard', isActive: true),
 
-          const Spacer(),
+                  _buildSidebarItem(Icons.point_of_sale, _isFrench ? 'Saisie de Caisse' : 'POS Entry', onTap: _rawData.isNotEmpty ? _showPosEntryDialog : null),
+                  _buildSidebarItem(Icons.download, _isFrench ? 'Exporter Rapports' : 'Export Reports', onTap: _rawData.isNotEmpty ? _showExportMenu : null),
+
+                  _buildSidebarItem(
+                    Icons.developer_mode,
+                    _isFrench ? 'Développeur' : 'Developer',
+                    iconColor: _isIpMismatch ? Colors.redAccent : null,
+                    textColor: _isIpMismatch ? Colors.redAccent : null,
+                    onTap: _showDeveloperPasswordDialog,
+                  ),
+
+                  const SizedBox(height: 20),
+                ],
+              ),
+            ),
+          ),
+
           if (_isFtpRunning && !_isIpMismatch)
             Container(
               margin: const EdgeInsets.all(24),
               padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(color: Colors.greenAccent.withOpacity(0.1), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.greenAccent.withOpacity(0.3))),
+              decoration: BoxDecoration(
+                  color: Colors.greenAccent.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.greenAccent.withOpacity(0.3))
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(children: [Icon(Icons.circle, color: Colors.greenAccent, size: 12), const SizedBox(width: 8), Text(_isFrench ? 'FTP Actif' : 'FTP Active', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white))]),
+                  Row(children: [
+                    Icon(Icons.circle, color: Colors.greenAccent, size: 12),
+                    const SizedBox(width: 8),
+                    Text(_isFrench ? 'FTP Actif' : 'FTP Active', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white))
+                  ]),
                   const SizedBox(height: 8),
                   Text('ftp://$_localIp:21', style: const TextStyle(fontSize: 12, color: Colors.white70)),
                 ],
@@ -1864,7 +1987,6 @@ class _CameraStreamWidgetState extends State<CameraStreamWidget> {
   void initState() {
     super.initState();
     _fetchFrame();
-    // Safely polls the camera without causing loading overlap
     _timer = Timer.periodic(const Duration(milliseconds: 1500), (_) {
       if (!_isDisposed) _fetchFrame();
     });
@@ -1873,7 +1995,6 @@ class _CameraStreamWidgetState extends State<CameraStreamWidget> {
   @override
   void didUpdateWidget(covariant CameraStreamWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Restart if user changes the IP via the dialog
     if (oldWidget.ipAddress != widget.ipAddress) {
       _lastFrame = null;
       _isError = false;
@@ -1892,12 +2013,10 @@ class _CameraStreamWidgetState extends State<CameraStreamWidget> {
   Future<void> _fetchFrame() async {
     if (_isDisposed) return;
 
-    // Remove any trailing slashes the user might have accidentally typed
     String cleanIp = widget.ipAddress.trim().replaceAll(RegExp(r'/$'), '');
     String targetUrl;
 
     if (cleanIp.contains('/api/getpreview')) {
-      // 🚀 Smart Fix: If you pasted the FULL url, we just update the timestamp
       targetUrl = cleanIp.startsWith('http') ? cleanIp : 'http://$cleanIp';
       if (targetUrl.contains(RegExp(r'&\d+$'))) {
         targetUrl = targetUrl.replaceAll(RegExp(r'&\d+$'), '&${DateTime.now().millisecondsSinceEpoch}');
@@ -1905,7 +2024,6 @@ class _CameraStreamWidgetState extends State<CameraStreamWidget> {
         targetUrl = "$targetUrl&${DateTime.now().millisecondsSinceEpoch}";
       }
     } else {
-      // 🚀 Just the IP: we build the correct path
       String baseUrl = cleanIp.startsWith('http') ? cleanIp : 'http://$cleanIp';
       targetUrl = "$baseUrl/api/getpreview/?w=320&h=240&${DateTime.now().millisecondsSinceEpoch}";
     }
@@ -1913,10 +2031,9 @@ class _CameraStreamWidgetState extends State<CameraStreamWidget> {
     try {
       HttpClient client = HttpClient();
       client.connectionTimeout = const Duration(seconds: 2);
-      client.badCertificateCallback = (cert, host, port) => true; // Bypass local network SSL issues
+      client.badCertificateCallback = (cert, host, port) => true;
 
       final request = await client.getUrl(Uri.parse(targetUrl));
-      // Fake a Windows browser so the camera doesn't reject us
       request.headers.set(HttpHeaders.userAgentHeader, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)');
       request.headers.set(HttpHeaders.acceptHeader, 'image/jpeg,image/png,*/*');
 
@@ -1967,7 +2084,7 @@ class _CameraStreamWidgetState extends State<CameraStreamWidget> {
             fit: BoxFit.contain,
             width: double.infinity,
             height: double.infinity,
-            gaplessPlayback: true, // Prevents screen flickering between frames
+            gaplessPlayback: true,
           ),
           if (_isError)
             Positioned(
