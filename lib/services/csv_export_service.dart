@@ -1,12 +1,11 @@
 // lib/services/csv_export_service.dart
 
 import 'dart:io';
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import '../models/people_count.dart';
 
 class CsvExportService {
-  /// Generates a CSV file and prompts the user to save it.
+  /// Generates a CSV file and saves it silently to the local disk.
   static Future<void> generateAndSaveCsv({
     required String reportType,
     required String dateRangeText,
@@ -15,8 +14,8 @@ class CsvExportService {
     required int totalIn,
     required int totalOut,
     required String peakHour,
-    String? customFileName,
-    // 🚀 NEW POS PARAMETERS
+    required String outputPath, // 🚀 NEW: Require absolute file path
+    // 🚀 POS PARAMETERS
     required double revenue,
     required int clients,
     required double conversionRate,
@@ -32,7 +31,7 @@ class CsvExportService {
       csv.writeln("Camera:,$cameraName");
       csv.writeln("");
 
-      // 🚀 UPDATED: Print POS Data to the CSV Header!
+      // 🚀 Print POS Data to the CSV Header
       int totalVisitors = (totalIn + totalOut) ~/ 2;
       csv.writeln("TRAFFIC METRICS:,TOTAL IN,TOTAL OUT,TOTAL VISITORS,PEAK HOUR");
       csv.writeln(",$totalIn,$totalOut,$totalVisitors,$peakHour");
@@ -51,29 +50,11 @@ class CsvExportService {
         csv.writeln("${item.date},${item.time},${item.doorName},${item.inCount},${item.outCount},$visitors");
       }
 
-      // 2. Open the 'Save As' Dialog using FilePicker
-      String finalFileName = customFileName ?? 'Traffic_Report_${DateTime.now().millisecondsSinceEpoch}.csv';
+      // 🚀 Silently write to disk
+      File file = File(outputPath);
+      await file.writeAsString(csv.toString());
 
-      String? outputFile = await FilePicker.platform.saveFile(
-        dialogTitle: 'Save CSV Report',
-        fileName: finalFileName,
-        type: FileType.custom,
-        allowedExtensions: ['csv'],
-      );
-
-      // 3. Save the file to the chosen location
-      if (outputFile != null) {
-        // file_picker on some OS doesn't auto-append the extension, let's enforce it:
-        if (!outputFile.toLowerCase().endsWith('.csv')) {
-          outputFile += '.csv';
-        }
-
-        File file = File(outputFile);
-        await file.writeAsString(csv.toString());
-        debugPrint("✅ CSV saved successfully at: $outputFile");
-      } else {
-        debugPrint("⚠️ CSV save canceled by user.");
-      }
+      debugPrint("✅ CSV saved successfully at: $outputPath");
     } catch (e) {
       debugPrint("❌ Error saving CSV: $e");
     }

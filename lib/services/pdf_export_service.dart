@@ -1,14 +1,14 @@
 // lib/services/pdf_export_service.dart
 
+import 'dart:io';
 import 'dart:typed_data';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
 import '../models/people_count.dart';
 
 class PdfExportService {
-  /// Generates a premium PDF and opens a preview window to save or print it.
-  static Future<void> generateAndPreviewReport({
+  /// Generates a premium PDF and saves it directly to the local disk.
+  static Future<void> generateAndSaveReport({
     required String reportType,
     required String dateRangeText,
     required String cameraName,
@@ -16,8 +16,8 @@ class PdfExportService {
     required int totalIn,
     required int totalOut,
     required String peakHour,
-    String? customFileName,
-    // 🚀 NEW POS PARAMETERS
+    required String outputPath, // 🚀 NEW: We now require an exact file path to save it silently
+    // 🚀 POS PARAMETERS
     required double revenue,
     required int clients,
     required double conversionRate,
@@ -145,13 +145,10 @@ class PdfExportService {
       ),
     );
 
-    // 4. Open the interactive Preview & Save Window
-    String finalFileName = customFileName ?? 'Traffic_Report_${DateTime.now().millisecondsSinceEpoch}.pdf';
-
-    await Printing.layoutPdf(
-      onLayout: (PdfPageFormat format) async => pdf.save(),
-      name: finalFileName,
-    );
+    // 🚀 4. NEW: SILENTLY SAVE THE FILE TO THE DISK
+    final File file = File(outputPath);
+    final Uint8List bytes = await pdf.save();
+    await file.writeAsBytes(bytes);
   }
 
   // Helper widget to draw the premium summary boxes in the PDF
@@ -168,7 +165,7 @@ class PdfExportService {
         children: [
           pw.Text(title, style: pw.TextStyle(color: PdfColors.grey400, fontSize: 8, fontWeight: pw.FontWeight.bold)),
           pw.SizedBox(height: 8),
-          pw.Text(value, style: pw.TextStyle(color: textColor, fontSize: 14, fontWeight: pw.FontWeight.bold)), // Adjusted font size slightly to fit larger numbers
+          pw.Text(value, style: pw.TextStyle(color: textColor, fontSize: 14, fontWeight: pw.FontWeight.bold)),
         ],
       ),
     );
