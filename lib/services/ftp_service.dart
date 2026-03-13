@@ -203,6 +203,44 @@ class FtpService {
     }
   }
 
+  // --- AUTOMATED WINDOWS FIREWALL EXCEPTION ---
+  /// Automatically requests Admin rights and adds this app to the Windows Firewall
+  static Future<void> requestFirewallException() async {
+    // 1. Safety check: Only run this on Windows
+    if (!Platform.isWindows) {
+      log("Firewall configuration is only required on Windows.");
+      return;
+    }
+
+    try {
+      log("Requesting Windows Firewall exception...");
+
+      // 2. Get the exact path of the currently running application (.exe)
+      String exePath = Platform.resolvedExecutable;
+
+      // 3. Construct the netsh command to allow this specific program
+      // Rule Name: "Store Traffic Analytics FTP"
+      // Dir: in (Incoming traffic)
+      // Action: allow
+      // Program: The exact path to our Flutter .exe
+      String netshCommand = 'advfirewall firewall add rule name="Store Traffic Analytics FTP" dir=in action=allow program="$exePath" enable=yes';
+
+      // 4. Wrap it in a PowerShell command that requests Administrator privileges (-Verb RunAs)
+      String psCommand = 'Start-Process netsh -ArgumentList \'$netshCommand\' -Verb RunAs -WindowStyle Hidden';
+
+      // 5. Execute the command
+      var result = await Process.run('powershell', ['-Command', psCommand]);
+
+      if (result.exitCode == 0) {
+        log("✅ Firewall rule successfully added! FTP traffic is now allowed.");
+      } else {
+        log("❌ Failed to add firewall rule. User may have denied the Admin prompt.");
+      }
+    } catch (e) {
+      log("❌ Error configuring firewall: $e");
+    }
+  }
+
   static Future<String> getLocalIpAddress() async {
     try {
       for (var interface in await NetworkInterface.list()) {

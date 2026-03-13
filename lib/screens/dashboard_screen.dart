@@ -19,7 +19,7 @@ import '../core/data_aggregator.dart';
 import '../services/pdf_export_service.dart';
 import '../services/csv_export_service.dart';
 import 'camera_ftp_setup_screen.dart';
-
+import 'export_screen.dart';
 enum ChartFilter { hourly, daily }
 
 class DashboardScreen extends StatefulWidget {
@@ -897,75 +897,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   void _showExportMenu() {
-    DateTimeRange eRange = _selectedDateRange ?? DateTimeRange(start: DateTime.now(), end: DateTime.now());
-    String eCam = _selectedCamera; ChartFilter eFilt = _currentFilter;
-
-    showModalBottomSheet(
-        context: context, isScrollControlled: true, backgroundColor: _cardDark, shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-        builder: (context) => StatefulBuilder(
-            builder: (context, setModalState) {
-              void applyPreset(String type) {
-                DateTime ref = eRange.end, start = ref;
-                if (type == 'Daily') { start = ref; eFilt = ChartFilter.hourly; }
-                else if (type == 'Weekly') { start = ref.subtract(const Duration(days: 6)); eFilt = ChartFilter.daily; }
-                else if (type == 'Monthly') { start = DateTime(ref.year, ref.month - 1, ref.day); eFilt = ChartFilter.daily; }
-                setModalState(() => eRange = DateTimeRange(start: start, end: ref));
-              }
-
-              String getTranslatedPreset(String p) {
-                if (!_isFrench) return p;
-                if (p == 'Daily') return 'Quotidien';
-                if (p == 'Weekly') return 'Hebdomadaire';
-                if (p == 'Monthly') return 'Mensuel';
-                return p;
-              }
-
-              return Padding(
-                padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom, left: 24, right: 24, top: 24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(_isFrench ? 'PARAMÈTRES D\'EXPORTATION' : 'EXPORT SETTINGS', style: TextStyle(color: _accentCyan, fontSize: 18, fontWeight: FontWeight.bold)), const SizedBox(height: 24),
-                    SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: ['Daily', 'Weekly', 'Monthly'].map((p) => Padding(padding: const EdgeInsets.only(right: 8.0), child: OutlinedButton(style: OutlinedButton.styleFrom(foregroundColor: Colors.white, side: BorderSide(color: Colors.white.withOpacity(0.2))), onPressed: () => applyPreset(p), child: Text(getTranslatedPreset(p))))).toList())), const SizedBox(height: 20),
-                    InkWell(
-                        onTap: () async {
-                          DateTimeRange? picked = await showDateRangePicker(context: context, firstDate: DateTime(2020), lastDate: DateTime.now().add(const Duration(days: 3650)), initialDateRange: eRange, builder: (context, child) => Theme(data: ThemeData.dark().copyWith(colorScheme: ColorScheme.dark(primary: _accentCyan, surface: _cardDark)), child: child!));
-                          if (picked != null) setModalState(() => eRange = picked);
-                        },
-                        child: Container(
-                            padding: const EdgeInsets.all(14), decoration: BoxDecoration(color: _bgDark, borderRadius: BorderRadius.circular(8)),
-                            child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text("${_formatDateOnly(eRange.start)}   →   ${_formatDateOnly(eRange.end)}", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)), Icon(Icons.edit_calendar, color: _accentCyan)])
-                        )
-                    ),
-                    const SizedBox(height: 20),
-                    Row(children: [
-                      Expanded(child: ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: _accentCyan, foregroundColor: Colors.black), icon: const Icon(Icons.picture_as_pdf), label: Text(_isFrench ? 'ENREGISTRER PDF' : 'SAVE PDF', style: const TextStyle(fontWeight: FontWeight.bold)), onPressed: () { Navigator.pop(context); _generateCustomReport(eCam, eRange, eFilt, format: 'pdf'); })),
-                      const SizedBox(width: 16),
-                      Expanded(child: ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: Colors.greenAccent, foregroundColor: Colors.black), icon: const Icon(Icons.table_chart), label: Text(_isFrench ? 'ENREGISTRER CSV' : 'SAVE CSV', style: const TextStyle(fontWeight: FontWeight.bold)), onPressed: () { Navigator.pop(context); _generateCustomReport(eCam, eRange, eFilt, format: 'csv'); }))
-                    ]), const SizedBox(height: 32),
-                  ],
-                ),
-              );
-            }
-        )
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ExportScreen(
+          rawData: _rawData,
+          availableCameras: _availableCameras,
+          isFrench: _isFrench,
+          workingMinuteStart: _workingMinuteStart,
+          workingMinuteEnd: _workingMinuteEnd,
+          posDatabase: _posDatabase, // 🚀 NEW: Pass the POS data!
+        ),
+      ),
     );
   }
 
-  Future<void> _generateCustomReport(String cam, DateTimeRange range, ChartFilter filter, {required String format}) async {
-    setState(() { _selectedCamera = cam; _selectedDateRange = range; _currentFilter = filter; _applyFilter(); });
-    await Future.delayed(const Duration(milliseconds: 200));
-    if (_displayedData.isEmpty) return;
-    String rType = filter == ChartFilter.hourly ? "Hourly Breakdown" : "Daily Summary Breakdown";
-    String cLabel = cam == 'All Doors' ? 'Global (All Doors)' : 'Camera ${cam.toUpperCase()}';
-    String sCam = cam.replaceAll(' ', '_'), sStart = _formatDateOnly(range.start), sEnd = _formatDateOnly(range.end);
-    String fName = sStart == sEnd ? "TrafficReport_${sCam}_$sStart" : "TrafficReport_${sCam}_${sStart}_to_$sEnd";
-
-    if (format == 'pdf') {
-      await PdfExportService.generateAndPreviewReport(reportType: rType, dateRangeText: _getFormattedDateString(), cameraName: cLabel, data: _displayedData, totalIn: _totalIn, totalOut: _totalOut, peakHour: _peakHour, customFileName: "$fName.pdf");
-    } else {
-      await CsvExportService.generateAndSaveCsv(reportType: rType, dateRangeText: _getFormattedDateString(), cameraName: cLabel, data: _displayedData, totalIn: _totalIn, totalOut: _totalOut, peakHour: _peakHour, customFileName: "$fName.csv");
-    }
-  }
 
   Widget _buildLanguageToggle() {
     return GestureDetector(

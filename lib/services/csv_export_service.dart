@@ -16,23 +16,31 @@ class CsvExportService {
     required int totalOut,
     required String peakHour,
     String? customFileName,
+    // 🚀 NEW POS PARAMETERS
+    required double revenue,
+    required int clients,
+    required double conversionRate,
+    required double avgBasket,
+    required double upt,
   }) async {
     try {
-      // 1. Build the CSV String
       StringBuffer csv = StringBuffer();
 
-      // Add Metadata Header
       csv.writeln("Retail Intelligence - Traffic Analytics Report");
       csv.writeln("Report Type:,$reportType");
       csv.writeln("Date Range:,$dateRangeText");
       csv.writeln("Camera:,$cameraName");
-      csv.writeln(""); // Empty line
+      csv.writeln("");
 
-      // Add Summary Data
+      // 🚀 UPDATED: Print POS Data to the CSV Header!
       int totalVisitors = (totalIn + totalOut) ~/ 2;
-      csv.writeln("TOTAL IN,TOTAL OUT,TOTAL VISITORS,PEAK HOUR");
-      csv.writeln("$totalIn,$totalOut,$totalVisitors,$peakHour");
-      csv.writeln(""); // Empty line
+      csv.writeln("TRAFFIC METRICS:,TOTAL IN,TOTAL OUT,TOTAL VISITORS,PEAK HOUR");
+      csv.writeln(",$totalIn,$totalOut,$totalVisitors,$peakHour");
+      csv.writeln("");
+
+      csv.writeln("SALES METRICS:,REVENUE,CLIENTS,CONV RATE,AVG BASKET,UPT");
+      csv.writeln(",$revenue DZD,$clients,${conversionRate.toStringAsFixed(1)}%,${avgBasket.toStringAsFixed(0)} DZD,${upt.toStringAsFixed(2)}");
+      csv.writeln("");
 
       // Add Table Headers
       csv.writeln("Date,Time,Door/Camera,Entrances (IN),Exits (OUT),Total Visitors");

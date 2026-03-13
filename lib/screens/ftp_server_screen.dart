@@ -6,7 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/ftp_service.dart';
-import 'camera_ftp_setup_screen.dart'; // 🚀 ADD THIS IMPORT
+import 'camera_ftp_setup_screen.dart';
+
 class FtpServerScreen extends StatefulWidget {
   const FtpServerScreen({Key? key}) : super(key: key);
 
@@ -145,7 +146,6 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
   Future<void> _initSettings() async {
     final prefs = await SharedPreferences.getInstance();
 
-    // REMOVED AUTO-FETCH: It now ONLY loads exactly what is saved.
     String savedIp = prefs.getString('ftp_ip') ?? '';
     String? savedPath = prefs.getString('saved_data_folder');
     int savedPort = prefs.getInt('ftp_port') ?? 21;
@@ -219,7 +219,6 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
             'FTP SERVER CONFIGURATION',
             style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16, letterSpacing: 1.5)
         ),
-        // 🚀 NEW: THE SETUP CAMERAS BUTTON
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 16.0, top: 8.0, bottom: 8.0),
@@ -290,14 +289,13 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
             ),
           ),
 
-        // --- NEW: IP Field with Auto-Detect Button ---
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(child: _buildTextField("Expected PC IP Address", _ipController)),
             const SizedBox(width: 12),
             Container(
-              height: 56, // Matches the height of the TextField
+              height: 56,
               margin: const EdgeInsets.only(bottom: 16),
               child: ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(
@@ -343,6 +341,8 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
           ),
         ),
         const SizedBox(height: 32),
+
+        // --- START/STOP SERVER BUTTON ---
         SizedBox(
           width: double.infinity,
           height: 60,
@@ -356,7 +356,40 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
             label: Text(_isRunning ? 'STOP SERVER' : 'START SERVER', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, letterSpacing: 1)),
             onPressed: _toggleServer,
           ),
-        )
+        ),
+
+        const SizedBox(height: 16), // Spacing
+
+        // --- NEW: FIX FIREWALL ISSUES BUTTON ---
+        SizedBox(
+          width: double.infinity,
+          height: 50,
+          child: OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              backgroundColor: Colors.orangeAccent.withOpacity(0.1),
+              foregroundColor: Colors.orangeAccent,
+              side: const BorderSide(color: Colors.orangeAccent, width: 1.5),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            onPressed: () async {
+              await FtpService.requestFirewallException();
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Requested Firewall Exception. Please click "Yes" on the Windows prompt.'),
+                    backgroundColor: Colors.orange,
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              }
+            },
+            icon: const Icon(Icons.security),
+            label: const Text(
+              'FIX FIREWALL ISSUES',
+              style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1),
+            ),
+          ),
+        ),
       ],
     );
   }

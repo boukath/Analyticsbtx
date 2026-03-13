@@ -9,14 +9,20 @@ import '../models/people_count.dart';
 class PdfExportService {
   /// Generates a premium PDF and opens a preview window to save or print it.
   static Future<void> generateAndPreviewReport({
-    required String reportType, // e.g., "Daily Report", "Monthly Report"
-    required String dateRangeText, // e.g., "Jan 26, 2026 - Jan 27, 2026"
+    required String reportType,
+    required String dateRangeText,
     required String cameraName,
     required List<PeopleCount> data,
     required int totalIn,
     required int totalOut,
     required String peakHour,
-    String? customFileName, // NEW: Allows passing a nice name!
+    String? customFileName,
+    // 🚀 NEW POS PARAMETERS
+    required double revenue,
+    required int clients,
+    required double conversionRate,
+    required double avgBasket,
+    required double upt,
   }) async {
     // 1. Create a new PDF document
     final pdf = pw.Document(
@@ -86,14 +92,23 @@ class PdfExportService {
           int totalVisitors = (totalIn + totalOut) ~/ 2;
 
           return [
-            // SUMMARY CARDS ROW
-            pw.Row(
-              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+            // SUMMARY CARDS WRAP (Allows cards to flow to the next line nicely)
+            pw.Wrap(
+              spacing: 12,
+              runSpacing: 12,
               children: [
+                // TRAFFIC METRICS
                 _buildPdfSummaryCard('TOTAL IN', totalIn.toString(), primaryColor, textLight),
                 _buildPdfSummaryCard('TOTAL OUT', totalOut.toString(), primaryColor, textLight),
                 _buildPdfSummaryCard('TOTAL VISITORS', totalVisitors.toString(), primaryColor, accentColor),
                 _buildPdfSummaryCard('PEAK HOUR', peakHour, primaryColor, textLight),
+
+                // 🚀 NEW: POS METRIC CARDS
+                _buildPdfSummaryCard('REVENUE', '${revenue.toStringAsFixed(0)} DZD', PdfColor.fromHex('#E8F5E9'), PdfColor.fromHex('#2E7D32')),
+                _buildPdfSummaryCard('CLIENTS', clients.toString(), PdfColor.fromHex('#F3E5F5'), PdfColor.fromHex('#6A1B9A')),
+                _buildPdfSummaryCard('CONV RATE', '${conversionRate.toStringAsFixed(1)}%', PdfColor.fromHex('#FFF3E0'), PdfColor.fromHex('#EF6C00')),
+                _buildPdfSummaryCard('AVG BASKET', '${avgBasket.toStringAsFixed(0)} DZD', PdfColor.fromHex('#E3F2FD'), PdfColor.fromHex('#1565C0')),
+                _buildPdfSummaryCard('UPT', upt.toStringAsFixed(2), PdfColor.fromHex('#FCE4EC'), PdfColor.fromHex('#C2185B')),
               ],
             ),
             pw.SizedBox(height: 30),
@@ -110,7 +125,6 @@ class PdfExportService {
               headerStyle: pw.TextStyle(color: textLight, fontWeight: pw.FontWeight.bold, fontSize: 10),
               cellStyle: pw.TextStyle(color: textDark, fontSize: 10),
               rowDecoration: const pw.BoxDecoration(border: pw.Border(bottom: pw.BorderSide(color: PdfColors.grey200, width: 0.5))),
-              // UPDATED HEADER: Changed "Total Activity" to "Total Visitors"
               headers: ['Date', 'Time', 'Door/Camera', 'Entrances (IN)', 'Exits (OUT)', 'Total Visitors'],
               data: data.map((item) {
                 // THE MATH FIX: (IN + OUT) / 2
@@ -122,7 +136,7 @@ class PdfExportService {
                   item.doorName,
                   item.inCount.toString(),
                   item.outCount.toString(),
-                  visitors.toString(), // Passes the corrected number!
+                  visitors.toString(),
                 ];
               }).toList(),
             ),
@@ -132,7 +146,6 @@ class PdfExportService {
     );
 
     // 4. Open the interactive Preview & Save Window
-    // Use the custom name, or fallback to the timestamp
     String finalFileName = customFileName ?? 'Traffic_Report_${DateTime.now().millisecondsSinceEpoch}.pdf';
 
     await Printing.layoutPdf(
@@ -155,7 +168,7 @@ class PdfExportService {
         children: [
           pw.Text(title, style: pw.TextStyle(color: PdfColors.grey400, fontSize: 8, fontWeight: pw.FontWeight.bold)),
           pw.SizedBox(height: 8),
-          pw.Text(value, style: pw.TextStyle(color: textColor, fontSize: 18, fontWeight: pw.FontWeight.bold)),
+          pw.Text(value, style: pw.TextStyle(color: textColor, fontSize: 14, fontWeight: pw.FontWeight.bold)), // Adjusted font size slightly to fit larger numbers
         ],
       ),
     );
