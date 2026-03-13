@@ -1532,12 +1532,36 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
                   bottomTitles: AxisTitles(
                     sideTitles: SideTitles(
-                      showTitles: true, reservedSize: 46, interval: 1,
+                      showTitles: true,
+                      reservedSize: 46,
+                      interval: 1,
                       getTitlesWidget: (value, meta) {
                         int index = value.toInt();
                         if (index >= 0 && index < _displayedData.length) {
+
                           String displayText = "";
-                          if (_currentFilter == ChartFilter.daily) {
+
+                          // ==========================================
+                          // 🛠️ THE PRO HOURLY VIEW LOGIC
+                          // ==========================================
+                          if (_currentFilter == ChartFilter.hourly) {
+                            // SKIP LABELS to prevent crowding:
+                            // If we have a lot of hours, only show every 2nd or 3rd label
+                            int step = _displayedData.length > 16 ? 3 : (_displayedData.length > 10 ? 2 : 1);
+
+                            if (index % step != 0 && index != _displayedData.length - 1) {
+                              return const SizedBox.shrink(); // Hide this label
+                            }
+
+                            // Format "14:00" into a sleek "14h" to save horizontal space
+                            String rawTime = _displayedData[index].time;
+                            displayText = "${rawTime.split(':')[0]}h";
+
+                          }
+                          // ==========================================
+                          // THE EXISTING DAILY VIEW LOGIC
+                          // ==========================================
+                          else {
                             String dateStr = _displayedData[index].date;
                             List<String> parts = dateStr.split('/');
                             if (parts.length == 3) {
@@ -1550,8 +1574,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             } else {
                               displayText = dateStr.substring(0, 5);
                             }
-                          } else {
-                            displayText = _displayedData[index].time;
                           }
 
                           return Padding(

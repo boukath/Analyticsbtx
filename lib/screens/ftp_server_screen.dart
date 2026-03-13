@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/ftp_service.dart';
-
+import 'camera_ftp_setup_screen.dart'; // 🚀 ADD THIS IMPORT
 class FtpServerScreen extends StatefulWidget {
   const FtpServerScreen({Key? key}) : super(key: key);
 
@@ -215,7 +215,35 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
           icon: const Icon(Icons.arrow_back, color: Colors.cyanAccent),
           onPressed: () => Navigator.pop(context),
         ),
-        title: const Text('FTP SERVER CONFIGURATION', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16, letterSpacing: 1.5)),
+        title: const Text(
+            'FTP SERVER CONFIGURATION',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16, letterSpacing: 1.5)
+        ),
+        // 🚀 NEW: THE SETUP CAMERAS BUTTON
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 16.0, top: 8.0, bottom: 8.0),
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.cyanAccent.withOpacity(0.2),
+                foregroundColor: Colors.cyanAccent,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  side: BorderSide(color: Colors.cyanAccent.withOpacity(0.5)),
+                ),
+              ),
+              icon: const Icon(Icons.video_camera_back, size: 20),
+              label: const Text('SETUP CAMERAS', style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1)),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const CameraFtpSetupScreen()),
+                );
+              },
+            ),
+          )
+        ],
       ),
       body: Stack(
         children: [
