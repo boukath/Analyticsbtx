@@ -146,7 +146,12 @@ class _ExportScreenState extends State<ExportScreen> {
     }
 
     String rType = _currentFilter == ChartFilter.hourly ? "Hourly Breakdown" : "Daily Summary Breakdown";
-    String cLabel = _selectedCamera == 'All Doors' ? 'Global (All Doors)' : 'Camera ${_selectedCamera.toUpperCase()}';
+
+    // 🚀 UPDATED TITLE LOGIC: Exact camera name or proper "All Doors" translation
+    String cLabel = _selectedCamera == 'All Doors'
+        ? (widget.isFrench ? 'Global (Toutes les Portes)' : 'Global (All Doors)')
+        : _selectedCamera;
+
     String dateRangeStr = sStart == sEnd ? sStart : "$sStart to $sEnd";
 
     // 5. Trigger the Export Services
@@ -169,7 +174,7 @@ class _ExportScreenState extends State<ExportScreen> {
         upt: upt,
       );
 
-      _showSuccessDialog(fullPdfPath, reportsDir.path);
+      _showSuccessDialog(fullPdfPath, reportsDir.path, "PDF");
 
     } else {
       // 🚀 UPDATED CSV EXPORT BLOCK
@@ -190,11 +195,14 @@ class _ExportScreenState extends State<ExportScreen> {
         avgBasket: avgBasket,
         upt: upt,
       );
+
+      _showSuccessDialog(fullCsvPath, reportsDir.path, "CSV");
     }
   }
 
   // 🚀 6. SUCCESS UI WITH FOLDER OPEN BUTTON
-  void _showSuccessDialog(String filePath, String folderPath) {
+  // Now accepts 'fileType' to show PDF or CSV dynamically
+  void _showSuccessDialog(String filePath, String folderPath, String fileType) {
     showDialog(
         context: context,
         builder: (context) => AlertDialog(
@@ -209,8 +217,8 @@ class _ExportScreenState extends State<ExportScreen> {
           ),
           content: Text(
             widget.isFrench
-                ? "Le PDF a été généré et enregistré dans :\n\n$filePath"
-                : "The PDF was successfully generated and saved to:\n\n$filePath",
+                ? "Le fichier $fileType a été généré et enregistré dans :\n\n$filePath"
+                : "The $fileType was successfully generated and saved to:\n\n$filePath",
             style: const TextStyle(color: Colors.white70),
           ),
           actions: [
