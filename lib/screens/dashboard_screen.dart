@@ -1540,26 +1540,58 @@ class _DashboardScreenState extends State<DashboardScreen> {
     bool isFilterActive = _workingMinuteStart > 0 || _workingMinuteEnd < 1439;
 
     String insightText = _isFrench
-        ? "Surveillance en temps réel. Les visiteurs d'aujourd'hui sont à $totalVisitors avec un pic à $_peakHour."
-        : "Real-time monitoring. Today's visitor count is $totalVisitors, peaking at $_peakHour.";
+        ? "Le trafic d'aujourd'hui atteint $totalVisitors visiteurs, avec une activité maximale enregistrée à $_peakHour."
+        : "Today's traffic has reached $totalVisitors visitors, with peak activity recorded at $_peakHour.";
 
     if (isFilterActive) {
       insightText += _isFrench ? " (Filtré: $startStr - $endStr)" : " (Filtered: $startStr - $endStr)";
     }
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
       decoration: BoxDecoration(
-        gradient: LinearGradient(colors: [_cardDark, _cardDark.withOpacity(0.5)]),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _accentCyan.withOpacity(0.3), width: 1),
-        boxShadow: [BoxShadow(color: _accentCyan.withOpacity(0.05), blurRadius: 20)],
+        // 🚀 PRO FEATURE: AI Holographic Gradient
+        gradient: LinearGradient(
+          colors: [
+            const Color(0xFF4A00E0).withOpacity(0.2), // Deep Purple
+            const Color(0xFF06B6D4).withOpacity(0.1), // Cyan
+            Colors.transparent
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFF4A00E0).withOpacity(0.3), width: 1.5),
       ),
       child: Row(
         children: [
-          Icon(Icons.auto_awesome, color: _accentCyan, size: 24),
-          const SizedBox(width: 16),
-          Expanded(child: Text(insightText, style: const TextStyle(color: Colors.white70, fontSize: 15, fontWeight: FontWeight.w500))),
+          // 🚀 PRO FEATURE: Animated-style AI Sparkle Icon
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.4),
+              shape: BoxShape.circle,
+              boxShadow: [BoxShadow(color: const Color(0xFF06B6D4).withOpacity(0.4), blurRadius: 15)],
+            ),
+            child: const Icon(Icons.auto_awesome, color: Colors.white, size: 22),
+          ),
+          const SizedBox(width: 20),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                    _isFrench ? "ANALYSE INTELLIGENTE" : "SMART INSIGHT",
+                    style: const TextStyle(color: Color(0xFF06B6D4), fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 2.0)
+                ),
+                const SizedBox(height: 4),
+                Text(
+                    insightText,
+                    style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w500, height: 1.4)
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -1892,43 +1924,51 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(_isFrench ? 'ZONES ET PORTES' : 'ZONES & DOORS', style: const TextStyle(color: Colors.white54, fontSize: 14, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
+        Text(_isFrench ? 'ZONES ET CAMÉRAS' : 'ZONES & CAMERAS', style: const TextStyle(color: Colors.white38, fontSize: 13, fontWeight: FontWeight.w800, letterSpacing: 2.5)),
         const SizedBox(height: 16),
         SizedBox(
-          height: 110,
+          height: 55, // Sleek, thin height
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
             itemCount: _availableCameras.length,
+            physics: const BouncingScrollPhysics(), // Premium Apple scroll bounce
             itemBuilder: (context, index) {
               String cameraName = _availableCameras[index];
               bool isSelected = _selectedCamera == cameraName;
-              String displayName = cameraName == 'All Doors' ? (_isFrench ? 'Toutes les Portes' : 'All Doors') : cameraName.toUpperCase();
+              String displayName = cameraName == 'All Doors' ? (_isFrench ? 'Vue Globale' : 'Global View') : cameraName.toUpperCase();
 
               return GestureDetector(
                 onTap: () => setState(() { _selectedCamera = cameraName; _applyFilter(); }),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 300),
-                  margin: const EdgeInsets.only(right: 16),
-                  width: 220,
-                  padding: const EdgeInsets.all(20),
+                  curve: Curves.easeOutCubic,
+                  margin: const EdgeInsets.only(right: 12),
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
                   decoration: BoxDecoration(
-                    color: isSelected ? _accentCyan.withOpacity(0.1) : _cardDark,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: isSelected ? _accentCyan : Colors.white.withOpacity(0.05), width: 2),
+                    color: isSelected ? Colors.white : _cardDark, // High contrast when selected
+                    borderRadius: BorderRadius.circular(30), // Perfect pill shape
+                    border: Border.all(color: isSelected ? Colors.white : Colors.white.withOpacity(0.1), width: 1.5),
+                    boxShadow: isSelected ? [BoxShadow(color: Colors.white.withOpacity(0.2), blurRadius: 15, offset: const Offset(0, 4))] : [],
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Text(displayName, style: TextStyle(color: isSelected ? Colors.white : Colors.white70, fontWeight: FontWeight.bold, fontSize: 16), maxLines: 1, overflow: TextOverflow.ellipsis),
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Container(width: 8, height: 8, decoration: BoxDecoration(color: isSelected ? _accentCyan : Colors.white38, shape: BoxShape.circle)),
-                          const SizedBox(width: 8),
-                          Text(isSelected ? (_isFrench ? 'Sélectionné' : 'Selected') : (_isFrench ? 'Cliquez pour filtrer' : 'Tap to filter'), style: TextStyle(color: isSelected ? _accentCyan : Colors.white38, fontSize: 12, fontWeight: FontWeight.bold)),
-                        ],
-                      )
+                      // Pulsing Live Dot for individual cameras
+                      if (cameraName != 'All Doors') ...[
+                        Container(
+                            width: 8, height: 8,
+                            decoration: BoxDecoration(color: isSelected ? Colors.black : _accentCyan, shape: BoxShape.circle, boxShadow: [BoxShadow(color: _accentCyan, blurRadius: 6)])
+                        ),
+                        const SizedBox(width: 10),
+                      ],
+                      Text(
+                          displayName,
+                          style: TextStyle(
+                              color: isSelected ? Colors.black : Colors.white70,
+                              fontWeight: isSelected ? FontWeight.w900 : FontWeight.w600,
+                              fontSize: 14, letterSpacing: 0.5
+                          )
+                      ),
                     ],
                   ),
                 ),
@@ -1952,35 +1992,35 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     List<Widget> gridItems = [
       _buildBentoCard(
-          title: _isFrench ? 'Chiffre d\'Affaires (CA)' : 'Revenue (CA)',
-          value: '${_currentCa.toStringAsFixed(0)} DZD',
-          icon: Icons.payments,
-          color: Colors.greenAccent,
-          height: 200,
+          title: _isFrench ? 'CHIFFRE D\'AFFAIRES' : 'REVENUE',
+          value: '${_currentCa.toStringAsFixed(0)}',
+          unit: 'DZD',
+          icon: Icons.account_balance_wallet_rounded,
+          color: const Color(0xFF38EF7D), // Premium Mint Green
           trendWidget: _buildTrendBadge(_currentCa, _compareCa)
       ),
       _buildBentoCard(
-          title: _isFrench ? 'Taux de Conv.' : 'Conv. Rate',
-          value: '${conversionRate.toStringAsFixed(1)}%',
-          icon: Icons.track_changes,
-          color: Colors.orangeAccent,
-          height: 200,
+          title: _isFrench ? 'TAUX DE CONV.' : 'CONV. RATE',
+          value: conversionRate.toStringAsFixed(1),
+          unit: '%',
+          icon: Icons.track_changes_rounded,
+          color: const Color(0xFFFF512F), // Premium Sunset Orange
           trendWidget: _buildTrendBadge(conversionRate, compareConv)
       ),
       _buildBentoCard(
-          title: _isFrench ? 'Panier Moyen' : 'Avg Basket',
-          value: '${avgBasket.toStringAsFixed(0)} DZD',
-          icon: Icons.shopping_cart,
-          color: Colors.indigoAccent,
-          height: 200,
+          title: _isFrench ? 'PANIER MOYEN' : 'AVG BASKET',
+          value: avgBasket.toStringAsFixed(0),
+          unit: 'DZD',
+          icon: Icons.shopping_bag_rounded,
+          color: const Color(0xFF00C6FF), // Premium Cyan
           trendWidget: _buildTrendBadge(avgBasket, compareBasket)
       ),
       _buildBentoCard(
-          title: _isFrench ? 'I.D.V' : 'U.P.T',
+          title: _isFrench ? 'INDICE DE VENTE' : 'U.P.T',
           value: upt.toStringAsFixed(2),
-          icon: Icons.layers,
-          color: Colors.purpleAccent,
-          height: 200,
+          unit: 'ART',
+          icon: Icons.layers_rounded,
+          color: const Color(0xFF8E2DE2), // Premium Deep Purple
           trendWidget: _buildTrendBadge(upt, compareUpt)
       ),
     ];
@@ -2005,14 +2045,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  Widget _buildBentoCard({required String title, required String value, required IconData icon, required Color color, required double height, Widget? trendWidget}) {
+  Widget _buildBentoCard({required String title, required String value, required String unit, required IconData icon, required Color color, Widget? trendWidget}) {
     return Container(
-      height: height,
-      padding: const EdgeInsets.all(24),
+      height: 220, // Slightly taller for a majestic feel
+      padding: const EdgeInsets.all(28),
       decoration: BoxDecoration(
         color: _cardDark,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: Colors.white.withOpacity(0.05)),
+        // 🚀 PRO FEATURE: Radial Ambient Glow inside the card
+        gradient: RadialGradient(
+          colors: [color.withOpacity(0.15), _cardDark.withOpacity(0.0)],
+          center: Alignment.topRight,
+          radius: 1.5,
+        ),
+        borderRadius: BorderRadius.circular(32),
+        border: Border.all(color: Colors.white.withOpacity(0.06), width: 1.5),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withOpacity(0.3), blurRadius: 24, offset: const Offset(0, 12)),
+          BoxShadow(color: color.withOpacity(0.04), blurRadius: 40, spreadRadius: 5), // Ambient colored shadow
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2020,10 +2070,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // 🚀 PRO FEATURE: Frosted Glass Icon Container
               Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(color: color.withOpacity(0.1), shape: BoxShape.circle),
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.03),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: color.withOpacity(0.3), width: 1.5),
+                  boxShadow: [BoxShadow(color: color.withOpacity(0.2), blurRadius: 12)],
+                ),
                 child: Icon(icon, color: color, size: 28),
               ),
               if (trendWidget != null) trendWidget,
@@ -2032,9 +2089,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(title, style: const TextStyle(fontSize: 16, color: Colors.white54, fontWeight: FontWeight.w600)),
-              const SizedBox(height: 8),
-              Text(value, style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: -0.5)),
+              Text(title, style: const TextStyle(fontSize: 12, color: Colors.white54, fontWeight: FontWeight.w800, letterSpacing: 2.0)),
+              const SizedBox(height: 4),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
+                children: [
+                  Text(value, style: const TextStyle(fontSize: 42, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: -1.5)),
+                  const SizedBox(width: 6),
+                  Text(unit, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: color.withOpacity(0.8))),
+                ],
+              ),
             ],
           ),
         ],
@@ -2042,7 +2107,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 }
-
 // =========================================================================
 // 🚀 THE NEW CUSTOM IP CAMERA STREAM ENGINE
 // =========================================================================
