@@ -1,7 +1,7 @@
 // lib/screens/splash_screen.dart
 
 import 'package:flutter/material.dart';
-import 'dashboard_screen.dart';
+import 'dashboard_windows.dart';
 import '../services/b2_cloud_service.dart';
 import '../services/ftp_service.dart';
 import '../main.dart'; // To access the globalNavigatorKey

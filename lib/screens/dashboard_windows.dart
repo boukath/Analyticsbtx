@@ -1,4 +1,4 @@
-// lib/screens/dashboard_screen.dart
+// lib/screens/dashboard_windows.dart
 
 import 'dart:ui';
 import 'dart:async';
@@ -22,6 +22,7 @@ import 'camera_ftp_setup_screen.dart';
 import 'export_screen.dart';
 import 'developer_screen.dart';
 import 'package:webview_windows/webview_windows.dart';
+import '../services/firebase_sync_service.dart';
 
 enum ChartFilter { hourly, daily }
 
@@ -40,6 +41,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String? _selectedFolderPath;
   ChartFilter _currentFilter = ChartFilter.hourly;
   DateTimeRange? _selectedDateRange;
+
 
   void _showLinkIpDialog(String cameraName) {
     TextEditingController ipController = TextEditingController(text: _cameraIps[cameraName]);
@@ -166,6 +168,45 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _checkFtpStatus();
     _startSecurityMonitor();
     _loadCameraIps();
+
+    // 🚀 NEW: Start the 14:00 and 22:00 background sync timer
+    FirebaseSyncService.startScheduledSync(_performFirebaseSync);
+  }
+
+  // 🚀 NEW: The function that gathers the data and sends it to Firebase
+  Future<void> _performFirebaseSync() async {
+    if (_displayedData.isEmpty) {
+      debugPrint("⚠️ No data to sync to Firebase yet.");
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Starting Cloud Sync...'), backgroundColor: Colors.orangeAccent),
+    );
+
+    final now = DateTime.now();
+    String dateStr = "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
+
+    // Extract POS data for today
+    Map<String, dynamic>? posDataForToday = _posDatabase[dateStr];
+
+    // Push to Firebase
+    await FirebaseSyncService.uploadDailySummary(
+      hourlyData: _displayedData,
+      totalIn: _totalIn,
+      totalOut: _totalOut,
+      posDataForToday: posDataForToday,
+    );
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_isFrench ? 'Synchronisation réussie !' : 'Cloud Sync Successful!'),
+          backgroundColor: Colors.greenAccent,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 
   @override
@@ -355,6 +396,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
               builder: (context, setDialogState) {
 
                 // This function sits inside the builder, so it knows what errorMessage is!
+                // Inside _showDeveloperPasswordDialog() in dashboard_screen.dart
+
                 void verifyPassword() async {
                   if (passCtrl.text == "boitexinfodev") {
                     Navigator.pop(dialogContext);
@@ -367,6 +410,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               onSelectDataSource: () {
                                 Navigator.pop(context);
                                 _pickFolderAndLoadData();
+                              },
+                              // 🚀 NEW: Pass the sync function to the Developer page!
+                              onForceSync: () {
+                                if (_rawData.isNotEmpty) {
+                                  _performFirebaseSync();
+                                }
                               },
                             )
                         )
@@ -858,9 +907,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  void _showEditStoreProfileDialog() {
-    TextEditingController nameCtrl = TextEditingController(text: _storeName);
-    TextEditingController locCtrl = TextEditingController(text: _storeLocation);
+  void _showEditStoreProfileDialog() async {
+    final prefs = await SharedPreferences.getInstance();
+    // Load the existing Firebase ID, or default to empty
+    String currentFirebaseId = prefs.getString('firebase_store_id') ?? '';
+
+    TextEditingController nameCtrl = TextEditingController(text: _storeName); // E.g., Zara
+    TextEditingController locCtrl = TextEditingController(text: _storeLocation); // E.g., Garden City Mall
+    TextEditingController firebaseIdCtrl = TextEditingController(text: currentFirebaseId); // E.g., zara_garden_city
+
     String? tempLogoPath = _storeLogoPath;
 
     showDialog(
@@ -875,56 +930,87 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       _isFrench ? 'Paramètres du Profil' : 'Store Profile Settings',
                       style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)
                   ),
-                  content: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      GestureDetector(
-                        onTap: () async {
-                          FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.image);
-                          if (result != null && result.files.single.path != null) {
-                            setDialogState(() => tempLogoPath = result.files.single.path);
-                          }
-                        },
-                        child: Container(
-                          width: 80, height: 80,
-                          decoration: BoxDecoration(
-                            color: _bgDark,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: _accentCyan, width: 2),
-                            image: tempLogoPath != null ? DecorationImage(image: FileImage(File(tempLogoPath!)), fit: BoxFit.cover) : null,
+                  content: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        GestureDetector(
+                          onTap: () async {
+                            FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.image);
+                            if (result != null && result.files.single.path != null) {
+                              setDialogState(() => tempLogoPath = result.files.single.path);
+                            }
+                          },
+                          child: Container(
+                            width: 80, height: 80,
+                            decoration: BoxDecoration(
+                              color: _bgDark,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: _accentCyan, width: 2),
+                              image: tempLogoPath != null ? DecorationImage(image: FileImage(File(tempLogoPath!)), fit: BoxFit.cover) : null,
+                            ),
+                            child: tempLogoPath == null ? Icon(Icons.add_a_photo, color: _accentCyan, size: 30) : null,
                           ),
-                          child: tempLogoPath == null ? Icon(Icons.add_a_photo, color: _accentCyan, size: 30) : null,
                         ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(_isFrench ? 'Appuyez pour changer le logo' : 'Tap to change logo', style: const TextStyle(color: Colors.white54, fontSize: 12)),
-                      const SizedBox(height: 24),
+                        const SizedBox(height: 8),
+                        Text(_isFrench ? 'Appuyez pour changer le logo' : 'Tap to change logo', style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                        const SizedBox(height: 24),
 
-                      TextField(
-                        controller: nameCtrl,
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                        decoration: InputDecoration(
-                          labelText: _isFrench ? 'Nom du Magasin / Marque' : 'Store / Brand Name',
-                          labelStyle: const TextStyle(color: Colors.white54),
-                          filled: true, fillColor: _bgDark,
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
-                          prefixIcon: Icon(Icons.storefront, color: _accentCyan),
+                        TextField(
+                          controller: nameCtrl,
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                          decoration: InputDecoration(
+                            labelText: _isFrench ? 'Marque (ex: Zara)' : 'Brand (e.g. Zara)',
+                            labelStyle: const TextStyle(color: Colors.white54),
+                            filled: true, fillColor: _bgDark,
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                            prefixIcon: Icon(Icons.storefront, color: _accentCyan),
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 12),
+                        const SizedBox(height: 12),
 
-                      TextField(
-                        controller: locCtrl,
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                        decoration: InputDecoration(
-                          labelText: _isFrench ? 'Emplacement (ex: Ville)' : 'Location (e.g. City)',
-                          labelStyle: const TextStyle(color: Colors.white54),
-                          filled: true, fillColor: _bgDark,
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
-                          prefixIcon: Icon(Icons.location_on, color: _accentMagenta),
+                        TextField(
+                          controller: locCtrl,
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                          decoration: InputDecoration(
+                            labelText: _isFrench ? 'Emplacement (ex: Garden City)' : 'Location (e.g. Garden City)',
+                            labelStyle: const TextStyle(color: Colors.white54),
+                            filled: true, fillColor: _bgDark,
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                            prefixIcon: Icon(Icons.location_on, color: _accentMagenta),
+                          ),
                         ),
-                      ),
-                    ],
+                        const SizedBox(height: 24),
+
+                        // --- NEW: FIREBASE CLOUD ID ---
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                              color: Colors.orangeAccent.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.orangeAccent.withOpacity(0.3))
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text("Cloud Sync Configuration", style: TextStyle(color: Colors.orangeAccent, fontWeight: FontWeight.bold, fontSize: 12)),
+                              const SizedBox(height: 8),
+                              TextField(
+                                controller: firebaseIdCtrl,
+                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                                decoration: InputDecoration(
+                                  labelText: 'Firebase Store ID (e.g. zara_garden_city)',
+                                  labelStyle: const TextStyle(color: Colors.white54, fontSize: 12),
+                                  filled: true, fillColor: _bgDark,
+                                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                                  prefixIcon: const Icon(Icons.cloud_sync, color: Colors.orangeAccent),
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      ],
+                    ),
                   ),
                   actions: [
                     TextButton(
@@ -934,14 +1020,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ElevatedButton(
                       style: ElevatedButton.styleFrom(backgroundColor: _accentCyan, foregroundColor: Colors.black),
                       onPressed: () async {
-                        final prefs = await SharedPreferences.getInstance();
-                        await prefs.setString('store_name', nameCtrl.text);
-                        await prefs.setString('store_location', locCtrl.text);
+                        // Save everything to SharedPreferences
+                        await prefs.setString('store_name', nameCtrl.text.trim());
+                        await prefs.setString('store_location', locCtrl.text.trim());
+                        await prefs.setString('firebase_store_id', firebaseIdCtrl.text.trim());
                         if (tempLogoPath != null) await prefs.setString('store_logo_path', tempLogoPath!);
 
                         setState(() {
-                          _storeName = nameCtrl.text;
-                          _storeLocation = locCtrl.text;
+                          _storeName = nameCtrl.text.trim();
+                          _storeLocation = locCtrl.text.trim();
                           _storeLogoPath = tempLogoPath;
                         });
                         Navigator.pop(context);

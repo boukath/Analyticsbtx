@@ -1,26 +1,45 @@
 // lib/main.dart
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart'; // 🚀 NEW: This gives us kIsWeb!
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'l10n/app_localizations.dart';
 
-// --- ADDED: Import your new splash screen ---
+// --- Firebase imports ---
+import 'package:firebase_core/firebase_core.dart';
+import 'firebase_options.dart';
+
+// --- Screen imports ---
 import 'screens/splash_screen.dart';
+import 'screens/login_screen.dart'; // 🚀 NEW: Import the login screen
 
 // A global navigator key so background services can show emergency popups anywhere!
 final GlobalKey<NavigatorState> globalNavigatorKey = GlobalKey<NavigatorState>();
 
-void main() {
+void main() async {
+  // Ensure Flutter engine is fully bound before making native calls
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 🚀 The heavy initialization (FTP and Cloud sync) has been moved
-  // into splash_screen.dart so the UI paints instantly!
+  // Initialize Firebase across Windows, Android, and Web automatically
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
 
-  runApp(const MyApp());
+  // 🚀 SMART ROUTING: Decide which screen to show first based on the platform
+  Widget firstScreen;
+  if (kIsWeb) {
+    firstScreen = const LoginScreen(); // Web users must log in to the Cloud Dashboard
+  } else {
+    firstScreen = const SplashScreen(); // Windows users go to the local worker app
+  }
+
+  runApp(MyApp(initialScreen: firstScreen));
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+  final Widget initialScreen; // 🚀 NEW: Accept the smartly selected screen
+
+  const MyApp({super.key, required this.initialScreen});
 
   @override
   Widget build(BuildContext context) {
@@ -47,8 +66,8 @@ class MyApp extends StatelessWidget {
       ],
       // ---------------------------------
 
-      // 🚀 Changed from DashboardScreen() to SplashScreen()
-      home: const SplashScreen(),
+      // 🚀 Use the smartly selected screen instead of a hardcoded one
+      home: initialScreen,
     );
   }
 }

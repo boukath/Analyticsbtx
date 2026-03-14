@@ -8,11 +8,13 @@ import 'cloud_sync_screen.dart';
 class DeveloperScreen extends StatelessWidget {
   final bool isFrench;
   final VoidCallback onSelectDataSource;
+  final VoidCallback onForceSync; // 🚀 NEW: Accept the sync function from the Dashboard
 
   const DeveloperScreen({
     Key? key,
     required this.isFrench,
     required this.onSelectDataSource,
+    required this.onForceSync, // 🚀 NEW
   }) : super(key: key);
 
   final Color _bgDark = const Color(0xFF0F172A);
@@ -81,6 +83,20 @@ class DeveloperScreen extends StatelessWidget {
                     icon: Icons.wifi_tethering,
                     color: Colors.greenAccent,
                     onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const FtpServerScreen())),
+                  ),
+                  // 🚀 FIXED: Call the passed function instead of the missing method
+                  _buildDevCard(
+                    context,
+                    title: isFrench ? 'Sync Firestore' : 'Force Cloud Sync',
+                    subtitle: isFrench ? 'Envoyer vers Firebase Database' : 'Push data to Firebase Database',
+                    icon: Icons.sync_problem,
+                    color: Colors.orangeAccent,
+                    onTap: () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text(isFrench ? "Synchronisation Firestore en cours..." : "Starting Firestore sync..."), backgroundColor: Colors.orangeAccent),
+                      );
+                      onForceSync();
+                    },
                   ),
                   _buildDevCard(
                     context,

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1075074014920",
+    "project_id": "boitexinfo-analytics-fab54",
+    "storage_bucket": "boitexinfo-analytics-fab54.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1075074014920:android:b96f17081603b36e058ffd",
+        "android_client_info": {
+          "package_name": "com.example.people_counter_analytics"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAB23QHMYYt7C29r8eQGMIr7Vkmlj32LJI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
