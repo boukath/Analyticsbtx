@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/people_count.dart';
 import '../core/data_aggregator.dart'; // 🚀 Add this import
+
 class FirebaseSyncService {
   static Timer? _scheduleTimer;
 
@@ -52,7 +53,11 @@ class FirebaseSyncService {
   }) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      String clientId = prefs.getString('firebase_client_id') ?? '';
+
+      // Sanitizing the client ID to prevent capitalization or space errors
+      String rawClientId = prefs.getString('firebase_client_id') ?? '';
+      String clientId = rawClientId.trim().replaceAll(' ', '_').toLowerCase();
+
       String brandName = prefs.getString('store_name') ?? 'Unknown Brand';
       String locationName = prefs.getString('store_location') ?? 'Unknown Location';
 
@@ -60,7 +65,29 @@ class FirebaseSyncService {
 
       String specificStoreId = "${brandName}_$locationName".replaceAll(' ', '_').toLowerCase();
 
-      // ... (Keep your existing client/store document updates here) ...
+      // =======================================================================
+      // 🚀 THE FIX: Create the Parent Documents so they aren't "Ghosts"
+      // =======================================================================
+
+      // 1. Explicitly create/update the Client document
+      await FirebaseFirestore.instance
+          .collection('clients')
+          .doc(clientId)
+          .set({
+        'last_active': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      // 2. Explicitly create/update the Store document inside the client
+      await FirebaseFirestore.instance
+          .collection('clients').doc(clientId)
+          .collection('stores').doc(specificStoreId)
+          .set({
+        'brand': brandName,
+        'location': locationName,
+        'last_active': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      // =======================================================================
 
       final now = DateTime.now();
       String dateKey = "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
@@ -112,6 +139,7 @@ class FirebaseSyncService {
         };
       }
 
+      // Finally, push the actual daily traffic data
       await FirebaseFirestore.instance
           .collection('clients').doc(clientId)
           .collection('stores').doc(specificStoreId)

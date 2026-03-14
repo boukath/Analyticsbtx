@@ -17,7 +17,6 @@ class StoreProfileScreen extends StatefulWidget {
 class _StoreProfileScreenState extends State<StoreProfileScreen> {
   final TextEditingController _nameCtrl = TextEditingController();
   final TextEditingController _locCtrl = TextEditingController();
-  // 🚀 CHANGED: This is now the Client ID controller
   final TextEditingController _clientIdCtrl = TextEditingController();
 
   String? _tempLogoPath;
@@ -42,7 +41,6 @@ class _StoreProfileScreenState extends State<StoreProfileScreen> {
       _locCtrl.text = prefs.getString('store_location') ?? "MAIN BRANCH";
       _clientIdCtrl.text = prefs.getString('firebase_client_id') ?? '';
       _tempLogoPath = prefs.getString('store_logo_path');
-      // 🚀 NEW: Load the preference (defaults to false to save DB space)
       _syncIndividualCameras = prefs.getBool('sync_individual_cameras') ?? false;
       _isLoading = false;
     });
@@ -53,7 +51,6 @@ class _StoreProfileScreenState extends State<StoreProfileScreen> {
     await prefs.setString('store_name', _nameCtrl.text.trim());
     await prefs.setString('store_location', _locCtrl.text.trim());
     await prefs.setString('firebase_client_id', _clientIdCtrl.text.trim());
-    // 🚀 NEW: Save the preference
     await prefs.setBool('sync_individual_cameras', _syncIndividualCameras);
 
     if (_tempLogoPath != null) {
@@ -153,7 +150,38 @@ class _StoreProfileScreenState extends State<StoreProfileScreen> {
                 const SizedBox(height: 24),
 
                 // Firebase Cloud ID
-                // 🚀 NEW: The Database Optimization Toggle
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                      color: Colors.orangeAccent.withOpacity(0.05),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.orangeAccent.withOpacity(0.3))
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                          widget.isFrench ? "Configuration du Cloud (Client)" : "Cloud Sync Configuration (Client)",
+                          style: const TextStyle(color: Colors.orangeAccent, fontWeight: FontWeight.bold, fontSize: 12)
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _clientIdCtrl,
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                        decoration: InputDecoration(
+                          labelText: widget.isFrench ? 'ID du Client (ex: zara_algerie)' : 'Client ID / Name (e.g. zara_algeria)',
+                          labelStyle: const TextStyle(color: Colors.white54, fontSize: 12),
+                          filled: true, fillColor: _bgDark,
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                          prefixIcon: const Icon(Icons.cloud_sync, color: Colors.orangeAccent),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // The Database Optimization Toggle
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   decoration: BoxDecoration(

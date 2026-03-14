@@ -20,7 +20,7 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
 
-  // 🚀 NEW: Store the selected client ID from the dropdown
+  // 🚀 Step 1: Store the selected client ID from the dropdown
   String? _selectedClientId;
 
   bool _isLoading = false;
@@ -29,24 +29,26 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
   final Color _cardDark = const Color(0xFF1E293B);
   final Color _accentCyan = const Color(0xFF06B6D4);
 
+  // 🚀 Step 2: Include the Client ID when creating the user
   Future<void> _createUser() async {
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _isLoading = true);
 
     try {
+      // 1. Create the user in Firebase Auth
       UserCredential userCredential = await FirebaseAuth.instance.createUserWithEmailAndPassword(
         email: _emailController.text.trim(),
         password: _passwordController.text.trim(),
       );
 
+      // 2. Save their profile data in the 'users' collection
       if (userCredential.user != null) {
-        // 🚀 CHANGED: Save 'client_id' instead of 'client_brand'
         await FirebaseFirestore.instance.collection('users').doc(userCredential.user!.uid).set({
           'full_name': _nameController.text.trim(),
           'email': _emailController.text.trim(),
-          'client_id': _selectedClientId,
-          'role': 'client',
+          'client_id': _selectedClientId, // Links them to the specific client!
+          'role': 'client', // Assigning the specific role
           'created_at': FieldValue.serverTimestamp(),
         });
       }
@@ -54,24 +56,79 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(widget.isFrench ? "Utilisateur créé avec succès!" : "User created successfully!"),
+            content: Text(widget.isFrench ? 'Utilisateur créé avec succès !' : 'User created successfully!'),
             backgroundColor: Colors.green,
           ),
         );
-        Navigator.pop(context);
+        Navigator.pop(context); // Go back after success
       }
     } on FirebaseAuthException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(e.message ?? (widget.isFrench ? "Erreur de création" : "Creation error")),
-            backgroundColor: Colors.redAccent,
+              content: Text(e.message ?? (widget.isFrench ? "Erreur de création" : "Creation error")),
+              backgroundColor: Colors.redAccent
           ),
         );
       }
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
+  }
+
+  // 🚀 Step 3: Helper method to build the Client Dropdown
+  Widget _buildClientDropdown() {
+    return StreamBuilder<QuerySnapshot>(
+      // Assuming your clients are stored in a 'clients' collection
+      stream: FirebaseFirestore.instance.collection('clients').snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        if (snapshot.hasError || !snapshot.hasData || snapshot.data!.docs.isEmpty) {
+          return Text(
+            widget.isFrench ? "Aucun client trouvé. Connectez d'abord un magasin." : "No clients found. Sync a store first.",
+            style: const TextStyle(color: Colors.redAccent),
+          );
+        }
+
+        List<DropdownMenuItem<String>> clientItems = snapshot.data!.docs.map((doc) {
+          return DropdownMenuItem<String>(
+            value: doc.id, // The document ID of the client (e.g. zara_algeria)
+            child: Text(doc.id, style: const TextStyle(color: Colors.white)),
+          );
+        }).toList();
+
+        return DropdownButtonFormField<String>(
+          value: _selectedClientId,
+          items: clientItems,
+          dropdownColor: _cardDark,
+          style: const TextStyle(color: Colors.white, fontSize: 16),
+          decoration: InputDecoration(
+            labelText: widget.isFrench ? 'Associer au Client' : 'Link to Client',
+            labelStyle: const TextStyle(color: Colors.white54),
+            filled: true,
+            fillColor: _bgDark,
+            prefixIcon: Icon(Icons.business, color: _accentCyan),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none,
+            ),
+          ),
+          onChanged: (value) {
+            setState(() {
+              _selectedClientId = value;
+            });
+          },
+          validator: (value) => value == null
+              ? (widget.isFrench ? 'Veuillez sélectionner un client' : 'Please select a client')
+              : null,
+        );
+      },
+    );
   }
 
   @override
@@ -117,46 +174,9 @@ class _CreateUserScreenState extends State<CreateUserScreen> {
                   ),
                   const SizedBox(height: 16),
 
-                  // 🚀 NEW: Dynamic Dropdown fetching from 'clients' collection
-                  StreamBuilder<QuerySnapshot>(
-                    stream: FirebaseFirestore.instance.collection('clients').snapshots(),
-                    builder: (context, snapshot) {
-                      if (snapshot.connectionState == ConnectionState.waiting) {
-                        return const Center(child: CircularProgressIndicator());
-                      }
+                  // 🚀 Inserting the newly extracted Client Dropdown
+                  _buildClientDropdown(),
 
-                      if (snapshot.hasError || !snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                        return Text(
-                          widget.isFrench ? "Aucun client trouvé. Connectez d'abord un magasin." : "No clients found. Sync a store first.",
-                          style: const TextStyle(color: Colors.redAccent),
-                        );
-                      }
-
-                      var clients = snapshot.data!.docs;
-
-                      return DropdownButtonFormField<String>(
-                        value: _selectedClientId,
-                        dropdownColor: _bgDark,
-                        style: const TextStyle(color: Colors.white, fontSize: 16),
-                        decoration: InputDecoration(
-                          labelText: widget.isFrench ? 'Sélectionner le Client' : 'Select Client',
-                          labelStyle: const TextStyle(color: Colors.white54),
-                          filled: true,
-                          fillColor: _bgDark,
-                          prefixIcon: Icon(Icons.business, color: _accentCyan),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-                        ),
-                        items: clients.map((doc) {
-                          return DropdownMenuItem<String>(
-                            value: doc.id,
-                            child: Text(doc.id), // e.g., 'zara_algeria'
-                          );
-                        }).toList(),
-                        onChanged: (value) => setState(() => _selectedClientId = value),
-                        validator: (value) => value == null ? (widget.isFrench ? 'Ce champ est requis' : 'This field is required') : null,
-                      );
-                    },
-                  ),
                   const SizedBox(height: 16),
 
                   _buildTextField(

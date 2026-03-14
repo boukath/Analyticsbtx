@@ -23,7 +23,8 @@ class _EditUserScreenState extends State<EditUserScreen> {
   final _formKey = GlobalKey<FormState>();
 
   late TextEditingController _nameController;
-  String? _selectedClientId; // 🚀 NEW
+
+  String? _selectedClientId;
   late String _selectedRole;
 
   bool _isLoading = false;
@@ -36,9 +37,16 @@ class _EditUserScreenState extends State<EditUserScreen> {
   void initState() {
     super.initState();
     _nameController = TextEditingController(text: widget.currentData['full_name'] ?? '');
-    // Fetch either the new client_id or the old client_brand for backwards compatibility
+
+    // Fetch old client_id or fallback to client_brand
     _selectedClientId = widget.currentData['client_id'] ?? widget.currentData['client_brand'];
-    _selectedRole = widget.currentData['role'] ?? 'client';
+
+    // 🚀 THE FIX: Safety check for the role
+    String fetchedRole = widget.currentData['role'] ?? 'client';
+    if (fetchedRole != 'client' && fetchedRole != 'admin') {
+      fetchedRole = 'client'; // Defaults to 'client' if it finds 'client_viewer' or anything else!
+    }
+    _selectedRole = fetchedRole;
   }
 
   @override
@@ -55,7 +63,7 @@ class _EditUserScreenState extends State<EditUserScreen> {
     try {
       await FirebaseFirestore.instance.collection('users').doc(widget.userId).update({
         'full_name': _nameController.text.trim(),
-        'client_id': _selectedClientId, // 🚀 CHANGED
+        'client_id': _selectedClientId,
         'role': _selectedRole,
         'last_updated': FieldValue.serverTimestamp(),
       });
@@ -130,7 +138,7 @@ class _EditUserScreenState extends State<EditUserScreen> {
                   ),
                   const SizedBox(height: 16),
 
-                  // 🚀 NEW: Dynamic Dropdown fetching from 'clients' collection
+                  // 🚀 FETCH CLIENTS FROM FIREBASE DROPDOWN
                   StreamBuilder<QuerySnapshot>(
                     stream: FirebaseFirestore.instance.collection('clients').snapshots(),
                     builder: (context, snapshot) {
@@ -138,18 +146,22 @@ class _EditUserScreenState extends State<EditUserScreen> {
                         return const Center(child: CircularProgressIndicator());
                       }
 
-                      if (snapshot.hasError || !snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                      List<String> clientIds = [];
+                      if (snapshot.hasData) {
+                        clientIds = snapshot.data!.docs.map((doc) => doc.id).toList();
+                      }
+
+                      // 🚀 ANTI-CRASH FIX: If the user's current client isn't in the DB list, add it so the Dropdown doesn't crash!
+                      if (_selectedClientId != null && _selectedClientId!.isNotEmpty && !clientIds.contains(_selectedClientId)) {
+                        clientIds.add(_selectedClientId!);
+                      }
+
+                      if (clientIds.isEmpty) {
                         return Text(
                           widget.isFrench ? "Aucun client trouvé." : "No clients found.",
                           style: const TextStyle(color: Colors.redAccent),
                         );
                       }
-
-                      var clients = snapshot.data!.docs;
-
-                      // Safety check: Ensure the selected ID actually exists in the current list
-                      bool idExists = clients.any((doc) => doc.id == _selectedClientId);
-                      if (!idExists) _selectedClientId = null;
 
                       return DropdownButtonFormField<String>(
                         value: _selectedClientId,
@@ -163,13 +175,15 @@ class _EditUserScreenState extends State<EditUserScreen> {
                           prefixIcon: Icon(Icons.business, color: _accentCyan),
                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
                         ),
-                        items: clients.map((doc) {
+                        items: clientIds.map((clientId) {
                           return DropdownMenuItem<String>(
-                            value: doc.id,
-                            child: Text(doc.id),
+                            value: clientId,
+                            child: Text(clientId),
                           );
                         }).toList(),
-                        onChanged: (value) => setState(() => _selectedClientId = value),
+                        onChanged: (value) {
+                          setState(() => _selectedClientId = value);
+                        },
                         validator: (value) => value == null ? (widget.isFrench ? 'Requis' : 'Required') : null,
                       );
                     },

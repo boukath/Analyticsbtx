@@ -251,9 +251,12 @@ class _DashboardWebState extends State<DashboardWeb> {
       // 1. Build dynamic camera list based on available data
       Set<String> cams = {'All Doors'};
       for (var item in _rawData) {
-        cams.add(item.doorName);
+        // Only add individual cameras to the dropdown, don't duplicate "All Doors"
+        if (item.doorName != 'All Doors') {
+          cams.add(item.doorName);
+        }
       }
-      _availableCameras = cams.toList();
+      _availableCameras = cams.toList()..sort(); // Sorting makes it look cleaner!
 
       // Reset if selected camera doesn't exist in new date range
       if (!_availableCameras.contains(_selectedCamera)) {
@@ -262,13 +265,19 @@ class _DashboardWebState extends State<DashboardWeb> {
 
       // 2. Filter data by working hours AND the selected camera
       List<PeopleCount> filteredData = _rawData.where((item) {
-        if (item.doorName != _selectedCamera) return false; // 🚀 CAMERA FILTER
+        // 🚀 FIXED: Only filter by camera if a specific camera is chosen!
+        if (_selectedCamera != 'All Doors' && item.doorName != _selectedCamera) {
+          return false;
+        }
 
         var timeParts = item.time.split(':');
         int hour = timeParts.isNotEmpty ? (int.tryParse(timeParts[0]) ?? 0) : 0;
         int minute = timeParts.length > 1 ? (int.tryParse(timeParts[1]) ?? 0) : 0;
         int totalMinutes = (hour * 60) + minute;
-        if (totalMinutes < _workingMinuteStart || totalMinutes > _workingMinuteEnd) return false;
+
+        if (totalMinutes < _workingMinuteStart || totalMinutes > _workingMinuteEnd) {
+          return false;
+        }
         return true;
       }).toList();
 
