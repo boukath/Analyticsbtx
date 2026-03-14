@@ -102,7 +102,7 @@ class _CameraFtpSetupScreenState extends State<CameraFtpSetupScreen> {
             Text('Delete $cameraName?', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
           ],
         ),
-        content: Text('Are you sure you want to remove this camera? This action cannot be undone.', style: const TextStyle(color: Colors.white54, fontSize: 14)),
+        content: const Text('Are you sure you want to remove this camera? This action cannot be undone.', style: TextStyle(color: Colors.white54, fontSize: 14)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -134,11 +134,11 @@ class _CameraFtpSetupScreenState extends State<CameraFtpSetupScreen> {
             return AlertDialog(
               backgroundColor: _cardDark,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: BorderSide(color: Colors.white.withOpacity(0.1))),
-              title: Row(
+              title: const Row(
                 children: [
-                  const Icon(Icons.router, color: _accentCyan),
-                  const SizedBox(width: 12),
-                  const Text('Camera Setup', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  Icon(Icons.router, color: _accentCyan),
+                  SizedBox(width: 12),
+                  Text('Camera Setup', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                 ],
               ),
               content: Column(
@@ -336,6 +336,9 @@ class _WindowsCameraWebScreenState extends State<WindowsCameraWebScreen> {
   final _webviewController = WebviewController();
   bool _isWebviewInitialized = false;
 
+  // 🚀 ADDED: Tracks whether we are viewing the default FTP page or the Model 2 table
+  bool _isModel2 = false;
+
   @override
   void initState() {
     super.initState();
@@ -343,9 +346,14 @@ class _WindowsCameraWebScreenState extends State<WindowsCameraWebScreen> {
   }
 
   Future<void> initPlatformState() async {
-    String targetUrl = widget.ipAddress.startsWith('http')
+    String baseUrl = widget.ipAddress.startsWith('http')
         ? widget.ipAddress
-        : 'http://${widget.ipAddress}/ftp';
+        : 'http://${widget.ipAddress}';
+
+    // 🚀 Load the appropriate path based on the selected model
+    String targetUrl = _isModel2
+        ? '$baseUrl/ftpserver/table/'
+        : '$baseUrl/ftp';
 
     try {
       await _webviewController.initialize();
@@ -362,6 +370,25 @@ class _WindowsCameraWebScreenState extends State<WindowsCameraWebScreen> {
             SnackBar(content: Text('Failed to load Webview: $e'), backgroundColor: Colors.redAccent)
         );
       }
+    }
+  }
+
+  // 🚀 ADDED: Function to switch URLs without reloading the entire widget
+  void _switchCameraModel(bool isModel2) {
+    setState(() {
+      _isModel2 = isModel2;
+    });
+
+    if (_isWebviewInitialized) {
+      String baseUrl = widget.ipAddress.startsWith('http')
+          ? widget.ipAddress
+          : 'http://${widget.ipAddress}';
+
+      String targetUrl = isModel2
+          ? '$baseUrl/ftpserver/table/'
+          : '$baseUrl/ftp';
+
+      _webviewController.loadUrl(targetUrl);
     }
   }
 
@@ -386,6 +413,38 @@ class _WindowsCameraWebScreenState extends State<WindowsCameraWebScreen> {
         ),
         iconTheme: const IconThemeData(color: Colors.white),
         actions: [
+          // 🚀 ADDED: Dropdown to switch between Camera Models
+          PopupMenuButton<bool>(
+            icon: const Icon(Icons.swap_horiz, color: _accentCyan),
+            tooltip: 'Switch Camera Model',
+            color: _cardDark,
+            onSelected: (bool isModel2) {
+              _switchCameraModel(isModel2);
+            },
+            itemBuilder: (context) => [
+              PopupMenuItem(
+                value: false,
+                child: Row(
+                  children: [
+                    Icon(Icons.camera_alt, color: !_isModel2 ? _accentCyan : Colors.white54, size: 20),
+                    const SizedBox(width: 12),
+                    Text("Model 1 (Default)", style: TextStyle(color: !_isModel2 ? _accentCyan : Colors.white)),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: true,
+                child: Row(
+                  children: [
+                    Icon(Icons.folder_shared, color: _isModel2 ? _accentCyan : Colors.white54, size: 20),
+                    const SizedBox(width: 12),
+                    Text("Model 2 (FTP Table)", style: TextStyle(color: _isModel2 ? _accentCyan : Colors.white)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: () {

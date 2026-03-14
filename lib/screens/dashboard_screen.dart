@@ -21,6 +21,7 @@ import '../services/csv_export_service.dart';
 import 'camera_ftp_setup_screen.dart';
 import 'export_screen.dart';
 import 'developer_screen.dart';
+import 'package:webview_windows/webview_windows.dart';
 
 enum ChartFilter { hourly, daily }
 
@@ -2108,8 +2109,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 }
 // =========================================================================
-// 🚀 THE NEW CUSTOM IP CAMERA STREAM ENGINE
+// 🚀 THE NEW SMART IP CAMERA STREAM ENGINE (AUTO-DETECT 2D/3D)
 // =========================================================================
+enum CameraType { unknown, model1_3d, model2_2d, error }
+
 class CameraStreamWidget extends StatefulWidget {
   final String ipAddress;
   const CameraStreamWidget({Key? key, required this.ipAddress}) : super(key: key);
@@ -2119,66 +2122,136 @@ class CameraStreamWidget extends StatefulWidget {
 }
 
 class _CameraStreamWidgetState extends State<CameraStreamWidget> {
-  Timer? _timer;
+  // Model 1 (3D) Variables
+  Timer? _pollingTimer;
   Uint8List? _lastFrame;
-  String _status = "Initializing...";
+
+  // Model 2 (2D) Variables
+  WebviewController? _webviewController;
+  bool _isWebviewInitialized = false;
+
+  // Global State
+  CameraType _cameraType = CameraType.unknown;
+  String _status = "Detecting Camera Model...";
   bool _isError = false;
   bool _isDisposed = false;
 
   @override
   void initState() {
     super.initState();
-    _fetchFrame();
-    _timer = Timer.periodic(const Duration(milliseconds: 1500), (_) {
-      if (!_isDisposed) _fetchFrame();
-    });
+    _detectAndStart();
   }
 
   @override
   void didUpdateWidget(covariant CameraStreamWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.ipAddress != widget.ipAddress) {
-      _lastFrame = null;
+      _cleanup();
+      _cameraType = CameraType.unknown;
       _isError = false;
       _status = "Reconnecting...";
-      _fetchFrame();
+      _detectAndStart();
     }
+  }
+
+  void _cleanup() {
+    _pollingTimer?.cancel();
+    _webviewController?.dispose();
+    _webviewController = null;
+    _isWebviewInitialized = false;
+    _lastFrame = null;
   }
 
   @override
   void dispose() {
     _isDisposed = true;
-    _timer?.cancel();
+    _cleanup();
     super.dispose();
   }
 
-  Future<void> _fetchFrame() async {
+  // --- 🧠 SMART AUTO-DETECTION ENGINE ---
+  Future<void> _detectAndStart() async {
     if (_isDisposed) return;
 
-    String cleanIp = widget.ipAddress.trim().replaceAll(RegExp(r'/$'), '');
-    String targetUrl;
+    // Clean user input (e.g. "http://192.168.1.203/control/" becomes "192.168.1.203")
+    String baseIp = widget.ipAddress.trim().replaceAll('http://', '').replaceAll('https://', '').split('/').first;
 
-    if (cleanIp.contains('/api/getpreview')) {
-      targetUrl = cleanIp.startsWith('http') ? cleanIp : 'http://$cleanIp';
-      if (targetUrl.contains(RegExp(r'&\d+$'))) {
-        targetUrl = targetUrl.replaceAll(RegExp(r'&\d+$'), '&${DateTime.now().millisecondsSinceEpoch}');
-      } else {
-        targetUrl = "$targetUrl&${DateTime.now().millisecondsSinceEpoch}";
-      }
-    } else {
-      String baseUrl = cleanIp.startsWith('http') ? cleanIp : 'http://$cleanIp';
-      targetUrl = "$baseUrl/api/getpreview/?w=320&h=240&${DateTime.now().millisecondsSinceEpoch}";
+    setState(() => _status = "Checking 3D Model API...");
+
+    // 1. Try 3D Model API
+    if (await _testModel1(baseIp)) {
+      if (_isDisposed) return;
+      setState(() {
+        _cameraType = CameraType.model1_3d;
+        _status = "Connected (3D Model)";
+      });
+      _startModel1Polling(baseIp);
+      return;
     }
 
+    setState(() => _status = "Checking 2D Model API...");
+
+    // 2. Try 2D Model URL
+    if (await _testModel2(baseIp)) {
+      if (_isDisposed) return;
+      setState(() {
+        _cameraType = CameraType.model2_2d;
+        _status = "Connected (2D Model)";
+      });
+      await _startModel2Webview(baseIp);
+      return;
+    }
+
+    // 3. Fail gracefully
+    if (!_isDisposed) {
+      setState(() {
+        _isError = true;
+        _cameraType = CameraType.error;
+        _status = "Unrecognized Camera Model or Offline";
+      });
+    }
+  }
+
+  Future<bool> _testModel1(String baseIp) async {
     try {
-      HttpClient client = HttpClient();
-      client.connectionTimeout = const Duration(seconds: 2);
-      client.badCertificateCallback = (cert, host, port) => true;
+      HttpClient client = HttpClient()..connectionTimeout = const Duration(seconds: 2);
+      final request = await client.getUrl(Uri.parse('http://$baseIp/api/getpreview/?w=320&h=240'));
+      final response = await request.close().timeout(const Duration(seconds: 2));
+      return response.statusCode == 200 && response.headers.contentType?.primaryType == 'image';
+    } catch (e) {
+      return false;
+    }
+  }
 
-      final request = await client.getUrl(Uri.parse(targetUrl));
-      request.headers.set(HttpHeaders.userAgentHeader, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)');
-      request.headers.set(HttpHeaders.acceptHeader, 'image/jpeg,image/png,*/*');
+  Future<bool> _testModel2(String baseIp) async {
+    try {
+      HttpClient client = HttpClient()..connectionTimeout = const Duration(seconds: 2);
+      final request = await client.getUrl(Uri.parse('http://$baseIp/control/countingsource/'));
+      final response = await request.close().timeout(const Duration(seconds: 2));
+      if (response.statusCode == 200) {
+        final body = await consolidateHttpClientResponseBytes(response);
+        final content = utf8.decode(body, allowMalformed: true);
+        return content.contains('id_ImagePreview');
+      }
+      return false;
+    } catch (e) {
+      return false;
+    }
+  }
 
+  // --- 📸 MODEL 1 (3D) LOGIC ---
+  void _startModel1Polling(String baseIp) {
+    _fetchModel1Frame(baseIp);
+    _pollingTimer = Timer.periodic(const Duration(milliseconds: 1500), (_) {
+      if (!_isDisposed) _fetchModel1Frame(baseIp);
+    });
+  }
+
+  Future<void> _fetchModel1Frame(String baseIp) async {
+    try {
+      HttpClient client = HttpClient()..connectionTimeout = const Duration(seconds: 2);
+      final url = "http://$baseIp/api/getpreview/?w=320&h=240&${DateTime.now().millisecondsSinceEpoch}";
+      final request = await client.getUrl(Uri.parse(url));
       final response = await request.close().timeout(const Duration(seconds: 3));
 
       if (response.statusCode == 200) {
@@ -2187,68 +2260,97 @@ class _CameraStreamWidgetState extends State<CameraStreamWidget> {
           setState(() {
             _lastFrame = bytes;
             _isError = false;
-            _status = "Connected";
-          });
-        }
-      } else {
-        if (!_isDisposed) {
-          setState(() {
-            _isError = true;
-            _status = "Camera HTTP Error: ${response.statusCode}";
           });
         }
       }
     } catch (e) {
-      if (!_isDisposed) {
-        setState(() {
-          _isError = true;
-          String err = e.toString();
-          if (err.contains("Timeout")) {
-            _status = "Connection Timed Out";
-          } else if (err.contains("SocketException")) {
-            _status = "Network unreachable (Check IP)";
-          } else {
-            _status = "Error: ${err.split('\n').first}";
-          }
-        });
-      }
+      if (!_isDisposed) setState(() { _isError = true; _status = "Connection Lost"; });
+    }
+  }
+
+  // --- 🎥 MODEL 2 (2D) LOGIC (WEBVIEW + JS INJECTION) ---
+  Future<void> _startModel2Webview(String baseIp) async {
+    _webviewController = WebviewController();
+    try {
+      await _webviewController!.initialize();
+      if (_isDisposed) return;
+
+      await _webviewController!.loadUrl('http://$baseIp/control/countingsource/');
+      setState(() => _isWebviewInitialized = true);
+
+      // 🚀 PRO TRICK: Inject JS periodically. This ensures that even if the camera's
+      // internal scripts draw the canvas slightly late, we catch it, hide everything
+      // else, and force the canvas to fill our exact dashboard window.
+      Timer.periodic(const Duration(seconds: 1), (timer) {
+        if (_isDisposed || _webviewController == null) {
+          timer.cancel();
+          return;
+        }
+        try {
+          _webviewController!.executeScript("""
+            var cvs = document.getElementById('id_ImagePreview');
+            if(cvs && !document.getElementById('boitex_custom_container')) {
+               // 1. Create a pitch black container
+               var container = document.createElement('div');
+               container.id = 'boitex_custom_container';
+               container.style.position = 'fixed';
+               container.style.top = '0';
+               container.style.left = '0';
+               container.style.width = '100vw';
+               container.style.height = '100vh';
+               container.style.backgroundColor = 'black';
+               container.style.zIndex = '999999';
+               container.style.display = 'flex';
+               container.style.justifyContent = 'center';
+               container.style.alignItems = 'center';
+               
+               // 2. Hide scrollbars on the main body
+               document.body.style.overflow = 'hidden';
+               
+               // 3. Steal the canvas and maximize it
+               cvs.style.display = 'block';
+               cvs.style.width = '100%';
+               cvs.style.height = '100%';
+               cvs.style.objectFit = 'contain';
+               
+               // 4. Attach to screen
+               container.appendChild(cvs);
+               document.body.appendChild(container);
+            }
+          """);
+        } catch(e) {}
+      });
+
+    } catch (e) {
+      if (!_isDisposed) setState(() { _isError = true; _status = "Webview Error: $e"; });
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_lastFrame != null) {
+    // 1. Model 1 View (Image Polling)
+    if (_cameraType == CameraType.model1_3d && _lastFrame != null) {
       return Stack(
         fit: StackFit.expand,
         children: [
-          Image.memory(
-            _lastFrame!,
-            fit: BoxFit.contain,
-            width: double.infinity,
-            height: double.infinity,
-            gaplessPlayback: true,
-          ),
-          if (_isError)
-            Positioned(
-              top: 8,
-              right: 8,
-              child: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(8)),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.warning, color: Colors.redAccent, size: 16),
-                    const SizedBox(width: 8),
-                    Text(_status, style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
-                  ],
-                ),
-              ),
-            ),
+          Image.memory(_lastFrame!, fit: BoxFit.contain, gaplessPlayback: true),
+          if (_isError) _buildErrorOverlay(),
         ],
       );
     }
 
+    // 2. Model 2 View (Webview Canvas)
+    if (_cameraType == CameraType.model2_2d && _isWebviewInitialized) {
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          Webview(_webviewController!),
+          if (_isError) _buildErrorOverlay(),
+        ],
+      );
+    }
+
+    // 3. Loading / Detecting / Error State
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -2265,11 +2367,26 @@ class _CameraStreamWidgetState extends State<CameraStreamWidget> {
             ),
           ),
           const SizedBox(height: 8),
-          Text(
-            widget.ipAddress,
-            style: const TextStyle(color: Colors.white24, fontSize: 11),
-          ),
+          Text(widget.ipAddress, style: const TextStyle(color: Colors.white24, fontSize: 11)),
         ],
+      ),
+    );
+  }
+
+  Widget _buildErrorOverlay() {
+    return Positioned(
+      top: 8, right: 8,
+      child: Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(8)),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.warning, color: Colors.redAccent, size: 16),
+            const SizedBox(width: 8),
+            Text(_status, style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
+          ],
+        ),
       ),
     );
   }

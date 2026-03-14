@@ -176,8 +176,10 @@ class FtpService {
           bool isComplete = await _waitForFileCompletion(uploadedFile);
 
           if (isComplete) {
-            log("✅ File writing complete. Preparing for cloud sync...");
-            await B2CloudService.uploadScbFile(uploadedFile, "LiveSync");
+            log("✅ Camera file received successfully: $fileName");
+            // 🚀 REMOVED: B2CloudService.uploadScbFile(...)
+            // The file is saved locally. The scheduled Auto-Sync in
+            // b2_cloud_service.dart will handle uploading it at 14:00 and 22:00.
           } else {
             log("❌ File upload timed out or failed: $fileName");
           }
