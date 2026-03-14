@@ -18,6 +18,9 @@ class B2CloudService {
   static bool _isAutoSyncing = false;
   static Set<String> _syncedFilesCache = {};
 
+  // NEW: Variable to remember the last time we performed a scheduled sync
+  static DateTime? _lastSyncTime;
+
   static final StreamController<String> _logController = StreamController<String>.broadcast();
   static Stream<String> get logStream => _logController.stream;
 
@@ -69,17 +72,32 @@ class B2CloudService {
     }
   }
 
-  // --- OPTIMIZED: The Background Timer ---
+  // --- OPTIMIZED: The Scheduled Background Timer ---
   static void _startAutoSyncTimer() {
     _autoSyncTimer?.cancel();
     if (_isEnabled) {
-      // CHANGED: From 15 minutes to 1 hour to maximize API cost savings!
-      // This reduces Class B API calls to just 24 per day per device.
-      log("⏱️ Background Auto-Sync activated (Running every 1 hour to optimize cloud costs).");
+      log("⏱️ Scheduled Auto-Sync activated (Will upload only at 14:00 and 22:00 to optimize cloud costs).");
 
-      // Use Duration(hours: 1) to trigger the sync once an hour
-      _autoSyncTimer = Timer.periodic(const Duration(hours: 1), (_) {
-        _runAutoSync();
+      // Wake up every 1 minute to check the clock
+      _autoSyncTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+        DateTime now = DateTime.now();
+
+        // Target hours: 14 (2 PM) and 22 (10 PM)
+        bool isSyncHour = (now.hour == 14 || now.hour == 22);
+
+        // Did we already sync during this specific hour today?
+        bool alreadySyncedThisHour = _lastSyncTime != null &&
+            _lastSyncTime!.hour == now.hour &&
+            _lastSyncTime!.day == now.day &&
+            _lastSyncTime!.month == now.month &&
+            _lastSyncTime!.year == now.year;
+
+        // If it's a target hour, and we haven't synced yet, DO IT!
+        if (isSyncHour && !alreadySyncedThisHour) {
+          log("⏳ Scheduled sync triggered for ${now.hour}:00...");
+          _lastSyncTime = now; // Mark this hour as completed
+          _runAutoSync();
+        }
       });
     }
   }
@@ -125,6 +143,8 @@ class B2CloudService {
 
       if (uploadedCount > 0) {
         log("✅ Auto-Sync complete. Synced $uploadedCount new/updated files.");
+      } else {
+        log("✅ Auto-Sync complete. No new files needed uploading.");
       }
 
     } catch (e) {
