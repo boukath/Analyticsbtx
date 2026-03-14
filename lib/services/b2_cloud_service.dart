@@ -72,34 +72,44 @@ class B2CloudService {
     }
   }
 
-  // --- OPTIMIZED: The Scheduled Background Timer ---
+  // --- OPTIMIZED: Exact Duration Scheduled Timer ---
   static void _startAutoSyncTimer() {
     _autoSyncTimer?.cancel();
-    if (_isEnabled) {
-      log("⏱️ Scheduled Auto-Sync activated (Will upload only at 14:00 and 22:00 to optimize cloud costs).");
 
-      // Wake up every 1 minute to check the clock
-      _autoSyncTimer = Timer.periodic(const Duration(minutes: 1), (_) {
-        DateTime now = DateTime.now();
+    if (!_isEnabled) return;
 
-        // Target hours: 14 (2 PM) and 22 (10 PM)
-        bool isSyncHour = (now.hour == 14 || now.hour == 22);
+    DateTime now = DateTime.now();
+    DateTime nextSync;
 
-        // Did we already sync during this specific hour today?
-        bool alreadySyncedThisHour = _lastSyncTime != null &&
-            _lastSyncTime!.hour == now.hour &&
-            _lastSyncTime!.day == now.day &&
-            _lastSyncTime!.month == now.month &&
-            _lastSyncTime!.year == now.year;
+    // Define today's sync targets: 14:00 (2 PM) and 22:00 (10 PM)
+    DateTime sync1 = DateTime(now.year, now.month, now.day, 14, 0);
+    DateTime sync2 = DateTime(now.year, now.month, now.day, 22, 0);
 
-        // If it's a target hour, and we haven't synced yet, DO IT!
-        if (isSyncHour && !alreadySyncedThisHour) {
-          log("⏳ Scheduled sync triggered for ${now.hour}:00...");
-          _lastSyncTime = now; // Mark this hour as completed
-          _runAutoSync();
-        }
-      });
+    // Determine which sync time is next based on the current time
+    if (now.isBefore(sync1)) {
+      nextSync = sync1; // It's before 14:00, so target 14:00 today
+    } else if (now.isBefore(sync2)) {
+      nextSync = sync2; // It's past 14:00 but before 22:00, target 22:00 today
+    } else {
+      // It's past 22:00, so target 14:00 TOMORROW
+      nextSync = sync1.add(const Duration(days: 1));
     }
+
+    // Calculate exactly how long we need to wait
+    Duration waitTime = nextSync.difference(now);
+
+    log("⏱️ Scheduled Auto-Sync activated. Next sync exactly at ${nextSync.hour}:00 "
+        "(in ${waitTime.inHours}h ${waitTime.inMinutes % 60}m).");
+
+    // Create a one-time timer that fires exactly when needed
+    _autoSyncTimer = Timer(waitTime, () async {
+      log("⏳ Scheduled sync triggered for ${nextSync.hour}:00...");
+
+      await _runAutoSync();
+
+      // Once finished, recursively call this method to schedule the NEXT sync!
+      _startAutoSyncTimer();
+    });
   }
 
   // --- The Auto-Sync Logic ---

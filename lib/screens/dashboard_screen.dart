@@ -1571,66 +1571,148 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     bool showPerDoor = _selectedCamera == 'All Doors' && _availableCameras.length > 2 && !_isCompareMode;
 
-    List<Color> doorColors = [
-      Colors.blueAccent, Colors.redAccent, Colors.greenAccent,
-      Colors.orangeAccent, Colors.purpleAccent, Colors.tealAccent,
-      Colors.pinkAccent, Colors.yellowAccent
+    // Premium Apple-inspired color palettes
+    List<List<Color>> luxuryGradients = [
+      [const Color(0xFF00C6FF), const Color(0xFF0072FF)], // Cyan to Deep Blue
+      [const Color(0xFFFF512F), const Color(0xFFDD2476)], // Sunset Orange to Pink
+      [const Color(0xFF11998E), const Color(0xFF38EF7D)], // Mint Green
+      [const Color(0xFF8E2DE2), const Color(0xFF4A00E0)], // Deep Purple
+      [const Color(0xFFFDC830), const Color(0xFFF37335)], // Warm Gold
     ];
+
     List<String> plottedDoors = _perDoorData.keys.toList();
 
+    // --- 1. SMART AXIS & PRO METRICS ENGINE ---
+    double maxTrafficY = 1.0;
+    double sumTraffic = 0;
+    int dataPointCount = 0;
+
+    // Calculate the absolute max peak and the mathematical average
+    void processSpotForMetrics(double value) {
+      if (value > maxTrafficY) maxTrafficY = value;
+      sumTraffic += value;
+      dataPointCount++;
+    }
+
+    if (showPerDoor) {
+      for (String door in plottedDoors) {
+        if (_perDoorData[door] != null) {
+          for (var item in _perDoorData[door]!) {
+            processSpotForMetrics((item.inCount + item.outCount) / 2);
+          }
+        }
+      }
+    } else if (_isCompareMode) {
+      for (var item in _displayedData) processSpotForMetrics((item.inCount + item.outCount) / 2);
+      for (var item in _compareDisplayedData) processSpotForMetrics((item.inCount + item.outCount) / 2);
+    } else {
+      for (var item in _displayedData) {
+        processSpotForMetrics(item.inCount.toDouble());
+        processSpotForMetrics(item.outCount.toDouble());
+      }
+    }
+
+    double averageTraffic = dataPointCount > 0 ? (sumTraffic / dataPointCount) : 0;
+
+    // Dynamic Interval Calibrator
+    double yInterval = 1;
+    if (maxTrafficY > 1000) yInterval = 200;
+    else if (maxTrafficY > 500) yInterval = 100;
+    else if (maxTrafficY > 100) yInterval = 50;
+    else if (maxTrafficY > 50) yInterval = 10;
+    else if (maxTrafficY > 20) yInterval = 5;
+    else if (maxTrafficY > 10) yInterval = 2;
+
+    // 🚀 Helper for the Volumetric Glass Fade
+    LinearGradient buildVolumetricFade(Color baseColor) {
+      return LinearGradient(
+        colors: [baseColor.withOpacity(0.35), baseColor.withOpacity(0.1), Colors.transparent],
+        stops: const [0.0, 0.5, 1.0],
+        begin: Alignment.topCenter, end: Alignment.bottomCenter,
+      );
+    }
+
+    // --- 2. BUILD THE CHART LINES ---
     if (showPerDoor) {
       int colorIndex = 0;
       for (String door in plottedDoors) {
         List<FlSpot> spots = [];
-        Color doorColor = doorColors[colorIndex % doorColors.length];
+        List<Color> doorGradient = luxuryGradients[colorIndex % luxuryGradients.length];
 
         for (int i = 0; i < _displayedData.length; i++) {
           String expectedTime = _displayedData[i].time;
           String expectedDate = _displayedData[i].date;
           var match = _perDoorData[door]!.where((d) => d.time == expectedTime && d.date == expectedDate).toList();
-          double total = 0;
-          if (match.isNotEmpty) {
-            total = ((match.first.inCount + match.first.outCount) / 2).toDouble();
-          }
+          double total = match.isNotEmpty ? ((match.first.inCount + match.first.outCount) / 2).toDouble() : 0;
           spots.add(FlSpot(i.toDouble(), total));
         }
 
         chartLines.add(LineChartBarData(
           spots: spots,
-          isCurved: true, color: doorColor, barWidth: 3, isStrokeCapRound: true, dotData: const FlDotData(show: false),
+          isCurved: true, curveSmoothness: 0.35,
+          gradient: LinearGradient(colors: doorGradient), barWidth: 4, isStrokeCapRound: true,
+          shadow: Shadow(color: doorGradient.first.withOpacity(0.5), blurRadius: 8, offset: const Offset(0, 4)),
+          belowBarData: BarAreaData(show: true, gradient: buildVolumetricFade(doorGradient.first)),
+          // 🚀 TESLA PEAK MARKER: Show dot only on the absolute maximum value
+          dotData: FlDotData(
+            show: true,
+            checkToShowDot: (spot, barData) => spot.y == maxTrafficY && spot.y > 0,
+            getDotPainter: (spot, percent, barData, index) => FlDotCirclePainter(
+              radius: 5, color: _bgDark, strokeWidth: 3, strokeColor: doorGradient.first,
+            ),
+          ),
         ));
         colorIndex++;
       }
     } else if (_isCompareMode) {
       chartLines.add(LineChartBarData(
         spots: _displayedData.asMap().entries.map((e) => FlSpot(e.key.toDouble(), ((e.value.inCount + e.value.outCount) / 2).toDouble())).toList(),
-        isCurved: true, color: _accentCyan, barWidth: 4, isStrokeCapRound: true, dotData: const FlDotData(show: false),
-        belowBarData: BarAreaData(show: true, gradient: LinearGradient(colors: [_accentCyan.withOpacity(0.3), Colors.transparent], begin: Alignment.topCenter, end: Alignment.bottomCenter)),
+        isCurved: true, curveSmoothness: 0.35, gradient: LinearGradient(colors: luxuryGradients[0]), barWidth: 5, isStrokeCapRound: true,
+        shadow: Shadow(color: luxuryGradients[0].first.withOpacity(0.5), blurRadius: 10, offset: const Offset(0, 5)),
+        belowBarData: BarAreaData(show: true, gradient: buildVolumetricFade(luxuryGradients[0].first)),
+        dotData: FlDotData(
+          show: true, checkToShowDot: (spot, barData) => spot.y == maxTrafficY && spot.y > 0,
+          getDotPainter: (spot, percent, barData, index) => FlDotCirclePainter(radius: 5, color: _bgDark, strokeWidth: 3, strokeColor: luxuryGradients[0].first),
+        ),
       ));
       chartLines.add(LineChartBarData(
         spots: _compareDisplayedData.asMap().entries.map((e) => FlSpot(e.key.toDouble(), ((e.value.inCount + e.value.outCount) / 2).toDouble())).toList(),
-        isCurved: true, color: _accentGrey, barWidth: 3, dashArray: [5, 5], isStrokeCapRound: true, dotData: const FlDotData(show: false),
+        isCurved: true, curveSmoothness: 0.35, color: _accentGrey.withOpacity(0.6), barWidth: 3, dashArray: [8, 6], isStrokeCapRound: true, dotData: const FlDotData(show: false),
       ));
     } else {
       chartLines.add(LineChartBarData(
         spots: _displayedData.asMap().entries.map((e) => FlSpot(e.key.toDouble(), e.value.inCount.toDouble())).toList(),
-        isCurved: true, color: _accentCyan, barWidth: 4, isStrokeCapRound: true, dotData: const FlDotData(show: false),
-        belowBarData: BarAreaData(show: true, gradient: LinearGradient(colors: [_accentCyan.withOpacity(0.3), Colors.transparent], begin: Alignment.topCenter, end: Alignment.bottomCenter)),
+        isCurved: true, curveSmoothness: 0.35, gradient: LinearGradient(colors: luxuryGradients[0]), barWidth: 5, isStrokeCapRound: true,
+        shadow: Shadow(color: luxuryGradients[0].first.withOpacity(0.4), blurRadius: 8, offset: const Offset(0, 4)),
+        belowBarData: BarAreaData(show: true, gradient: buildVolumetricFade(luxuryGradients[0].first)),
+        dotData: FlDotData(
+          show: true, checkToShowDot: (spot, barData) => spot.y == maxTrafficY && spot.y > 0,
+          getDotPainter: (spot, percent, barData, index) => FlDotCirclePainter(radius: 5, color: _bgDark, strokeWidth: 3, strokeColor: luxuryGradients[0].first),
+        ),
       ));
       chartLines.add(LineChartBarData(
         spots: _displayedData.asMap().entries.map((e) => FlSpot(e.key.toDouble(), e.value.outCount.toDouble())).toList(),
-        isCurved: true, color: _accentMagenta, barWidth: 4, isStrokeCapRound: true, dotData: const FlDotData(show: false),
-        belowBarData: BarAreaData(show: true, gradient: LinearGradient(colors: [_accentMagenta.withOpacity(0.3), Colors.transparent], begin: Alignment.topCenter, end: Alignment.bottomCenter)),
+        isCurved: true, curveSmoothness: 0.35, gradient: LinearGradient(colors: luxuryGradients[1]), barWidth: 5, isStrokeCapRound: true,
+        shadow: Shadow(color: luxuryGradients[1].first.withOpacity(0.4), blurRadius: 8, offset: const Offset(0, 4)),
+        belowBarData: BarAreaData(show: true, gradient: buildVolumetricFade(luxuryGradients[1].first)),
+        dotData: FlDotData(
+          show: true, checkToShowDot: (spot, barData) => spot.y == maxTrafficY && spot.y > 0,
+          getDotPainter: (spot, percent, barData, index) => FlDotCirclePainter(radius: 5, color: _bgDark, strokeWidth: 3, strokeColor: luxuryGradients[1].first),
+        ),
       ));
     }
 
+    // --- 3. LUXURY CARD LAYOUT ---
     return Container(
-      padding: const EdgeInsets.all(32),
+      padding: const EdgeInsets.all(40),
       decoration: BoxDecoration(
-        color: _cardDark,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: Colors.white.withOpacity(0.05)),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.3), blurRadius: 30, offset: const Offset(0, 10))],
+        gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [_cardDark, _bgDark]),
+        borderRadius: BorderRadius.circular(32),
+        border: Border.all(color: Colors.white.withOpacity(0.08), width: 1.5),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withOpacity(0.4), blurRadius: 40, offset: const Offset(0, 20)),
+          BoxShadow(color: _accentCyan.withOpacity(0.03), blurRadius: 60, spreadRadius: 10),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1642,12 +1724,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(_isFrench ? 'TOTAL VISITEURS' : 'TOTAL VISITORS', style: const TextStyle(color: Colors.white54, fontSize: 14, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
+                  Text(_isFrench ? 'TRAFIC GLOBAL' : 'GLOBAL TRAFFIC', style: const TextStyle(color: Colors.white54, fontSize: 13, fontWeight: FontWeight.w800, letterSpacing: 3.0)),
                   const SizedBox(height: 8),
                   Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic,
                     children: [
-                      Text(totalVisitors.toString(), style: const TextStyle(color: Colors.white, fontSize: 56, fontWeight: FontWeight.w900, letterSpacing: -2)),
+                      Text(totalVisitors.toString(), style: const TextStyle(color: Colors.white, fontSize: 72, fontWeight: FontWeight.w900, letterSpacing: -3, height: 1.0)),
                       const SizedBox(width: 16),
                       _buildTrendBadge(totalVisitors, _compareTotalVisitors),
                     ],
@@ -1657,143 +1739,139 @@ class _DashboardScreenState extends State<DashboardScreen> {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                        decoration: BoxDecoration(color: _bgDark, borderRadius: BorderRadius.circular(8)),
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<ChartFilter>(
-                            dropdownColor: _cardDark,
-                            value: _currentFilter, icon: const Icon(Icons.keyboard_arrow_down, color: Colors.white54), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
-                            items: [
-                              DropdownMenuItem(value: ChartFilter.hourly, child: Text(_isFrench ? 'Vue Horaire' : 'Hourly View')),
-                              DropdownMenuItem(value: ChartFilter.daily, child: Text(_isFrench ? 'Vue Journalière' : 'Daily View'))
-                            ],
-                            onChanged: (ChartFilter? newValue) { if (newValue != null) { setState(() { _currentFilter = newValue; _applyFilter(); }); } },
-                          ),
-                        ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+                    decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.white.withOpacity(0.1))),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<ChartFilter>(
+                        dropdownColor: _cardDark, icon: const Icon(Icons.expand_more, color: Colors.white70), value: _currentFilter,
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 15, letterSpacing: 0.5),
+                        items: [
+                          DropdownMenuItem(value: ChartFilter.hourly, child: Text(_isFrench ? 'Vue Horaire' : 'Hourly View')),
+                          DropdownMenuItem(value: ChartFilter.daily, child: Text(_isFrench ? 'Vue Journalière' : 'Daily View'))
+                        ],
+                        onChanged: (ChartFilter? newValue) { if (newValue != null) { setState(() { _currentFilter = newValue; _applyFilter(); }); } },
                       ),
-                    ],
+                    ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 24),
 
                   if (showPerDoor) ...[
                     ...plottedDoors.asMap().entries.map((entry) {
-                      Color dColor = doorColors[entry.key % doorColors.length];
+                      Color dColor = luxuryGradients[entry.key % luxuryGradients.length].first;
                       return Padding(
-                        padding: const EdgeInsets.only(bottom: 4.0),
-                        child: Row(children: [Icon(Icons.circle, size: 10, color: dColor), const SizedBox(width: 8), Text("${entry.value.toUpperCase()} Total", style: const TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600))]),
+                        padding: const EdgeInsets.only(bottom: 8.0),
+                        child: Row(children: [
+                          Container(width: 12, height: 12, decoration: BoxDecoration(color: dColor, shape: BoxShape.circle, boxShadow: [BoxShadow(color: dColor.withOpacity(0.5), blurRadius: 6)])),
+                          const SizedBox(width: 10), Text("${entry.value.toUpperCase()} Total", style: const TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600, letterSpacing: 0.5))
+                        ]),
                       );
                     }).toList(),
                   ] else if (_isCompareMode) ...[
-                    Row(children: [Icon(Icons.circle, size: 10, color: _accentCyan), const SizedBox(width: 8), Text(_isFrench ? 'Actuel' : 'Current', style: const TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600))]),
-                    const SizedBox(height: 4),
-                    Row(children: [Icon(Icons.circle, size: 10, color: _accentGrey), const SizedBox(width: 8), Text(_isFrench ? 'Précédent' : 'Previous', style: const TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600))]),
+                    Row(children: [Container(width: 12, height: 12, decoration: BoxDecoration(color: luxuryGradients[0].first, shape: BoxShape.circle, boxShadow: [BoxShadow(color: luxuryGradients[0].first.withOpacity(0.5), blurRadius: 6)])), const SizedBox(width: 10), Text(_isFrench ? 'Période Actuelle' : 'Current Period', style: const TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600))]),
+                    const SizedBox(height: 8),
+                    Row(children: [Container(width: 12, height: 12, decoration: BoxDecoration(color: _accentGrey, shape: BoxShape.circle)), const SizedBox(width: 10), Text(_isFrench ? 'Période Précédente' : 'Previous Period', style: const TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600))]),
                   ] else ...[
-                    Row(children: [Icon(Icons.login, color: _accentCyan, size: 16), const SizedBox(width: 8), Text('${_isFrench ? "Entrées" : "In"}: $_totalIn', style: const TextStyle(color: Colors.white70, fontSize: 16, fontWeight: FontWeight.w600))]),
-                    const SizedBox(height: 4),
-                    Row(children: [Icon(Icons.logout, color: _accentMagenta, size: 16), const SizedBox(width: 8), Text('${_isFrench ? "Sorties" : "Out"}: $_totalOut', style: const TextStyle(color: Colors.white70, fontSize: 16, fontWeight: FontWeight.w600))]),
+                    Row(children: [Container(width: 12, height: 12, decoration: BoxDecoration(gradient: LinearGradient(colors: luxuryGradients[0]), shape: BoxShape.circle, boxShadow: [BoxShadow(color: luxuryGradients[0].first.withOpacity(0.5), blurRadius: 6)])), const SizedBox(width: 10), Text('${_isFrench ? "Total Entrées" : "Total In"}: $_totalIn', style: const TextStyle(color: Colors.white70, fontSize: 15, fontWeight: FontWeight.w600))]),
+                    const SizedBox(height: 8),
+                    Row(children: [Container(width: 12, height: 12, decoration: BoxDecoration(gradient: LinearGradient(colors: luxuryGradients[1]), shape: BoxShape.circle, boxShadow: [BoxShadow(color: luxuryGradients[1].first.withOpacity(0.5), blurRadius: 6)])), const SizedBox(width: 10), Text('${_isFrench ? "Total Sorties" : "Total Out"}: $_totalOut', style: const TextStyle(color: Colors.white70, fontSize: 15, fontWeight: FontWeight.w600))]),
                   ]
                 ],
               )
             ],
           ),
-          const SizedBox(height: 40),
+          const SizedBox(height: 50),
 
+          // --- 4. THE FL_CHART IMPLEMENTATION ---
           SizedBox(
-            height: 350,
+            height: 380,
             child: LineChart(
               LineChartData(
+                minY: 0,
+                maxY: maxTrafficY * 1.15,
+
+                // 🚀 GOOGLE/BLOOMBERG TRENDLINE: The Average Baseline
+                extraLinesData: ExtraLinesData(
+                  horizontalLines: [
+                    if (averageTraffic > 0)
+                      HorizontalLine(
+                        y: averageTraffic,
+                        color: Colors.white.withOpacity(0.2),
+                        strokeWidth: 1.5,
+                        dashArray: [8, 4],
+                        label: HorizontalLineLabel(
+                          show: true,
+                          alignment: Alignment.topRight,
+                          padding: const EdgeInsets.only(right: 8, bottom: 4),
+                          style: const TextStyle(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 1.5),
+                          labelResolver: (line) => _isFrench ? 'MOYENNE' : 'AVERAGE',
+                        ),
+                      ),
+                  ],
+                ),
+
                 lineTouchData: LineTouchData(
+                  handleBuiltInTouches: true,
+                  getTouchedSpotIndicator: (LineChartBarData barData, List<int> spotIndexes) {
+                    return spotIndexes.map((spotIndex) {
+                      return TouchedSpotIndicatorData(
+                        FlLine(color: Colors.white.withOpacity(0.2), strokeWidth: 2, dashArray: [4, 4]),
+                        FlDotData(
+                          show: true,
+                          getDotPainter: (spot, percent, barData, index) => FlDotCirclePainter(radius: 6, color: Colors.white, strokeWidth: 4, strokeColor: barData.gradient?.colors.first ?? _accentCyan),
+                        ),
+                      );
+                    }).toList();
+                  },
                   touchTooltipData: LineTouchTooltipData(
-                    tooltipBgColor: _bgDark,
+                    tooltipBgColor: Colors.black87, tooltipRoundedRadius: 16, tooltipPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12), tooltipBorder: const BorderSide(color: Colors.white12, width: 1),
                     getTooltipItems: (touchedSpots) {
                       return touchedSpots.map((LineBarSpot touchedSpot) {
-                        final textStyle = TextStyle(color: touchedSpot.bar.color ?? Colors.white, fontWeight: FontWeight.bold, fontSize: 14);
-
+                        final textStyle = const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15, letterSpacing: 0.5);
                         String timeText = "";
                         if (_displayedData.length > touchedSpot.x.toInt()) {
-                          if (_currentFilter == ChartFilter.daily) {
-                            String dateStr = _displayedData[touchedSpot.x.toInt()].date;
-                            List<String> parts = dateStr.split('/');
-                            if (parts.length == 3) {
-                              DateTime dt = DateTime(int.parse(parts[2]), int.parse(parts[1]), int.parse(parts[0]));
-                              List<String> daysEn = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-                              List<String> daysFr = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
-                              String dayName = _isFrench ? daysFr[dt.weekday - 1] : daysEn[dt.weekday - 1];
-                              timeText = "$dayName, $dateStr";
-                            } else {
-                              timeText = dateStr;
-                            }
-                          } else {
-                            timeText = _displayedData[touchedSpot.x.toInt()].time;
-                          }
+                          timeText = _currentFilter == ChartFilter.daily ? _displayedData[touchedSpot.x.toInt()].date : _displayedData[touchedSpot.x.toInt()].time;
                         }
-
                         String type = "";
                         if (showPerDoor) {
-                          if (touchedSpot.barIndex < plottedDoors.length) {
-                            type = "${plottedDoors[touchedSpot.barIndex].toUpperCase()} Total: ";
-                          }
+                          if (touchedSpot.barIndex < plottedDoors.length) type = "${plottedDoors[touchedSpot.barIndex].toUpperCase()}: ";
                         } else if (_isCompareMode) {
                           type = touchedSpot.barIndex == 0 ? (_isFrench ? "Actuel: " : "Current: ") : (_isFrench ? "Précédent: " : "Previous: ");
                         } else {
                           type = touchedSpot.barIndex == 0 ? (_isFrench ? "Entrées: " : "In: ") : (_isFrench ? "Sorties: " : "Out: ");
                         }
-
-                        return LineTooltipItem("$timeText\n$type${touchedSpot.y.toInt()}", textStyle);
+                        return LineTooltipItem("$timeText\n", const TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.w600), children: [TextSpan(text: "$type${touchedSpot.y.toInt()}", style: textStyle)]);
                       }).toList();
                     },
                   ),
                 ),
-                gridData: const FlGridData(show: false),
+                gridData: FlGridData(
+                    show: true, drawVerticalLine: false, horizontalInterval: yInterval,
+                    getDrawingHorizontalLine: (value) => FlLine(color: Colors.white.withOpacity(0.05), strokeWidth: 1, dashArray: [8, 8])
+                ),
                 titlesData: FlTitlesData(
                   rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
                   topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                  leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  leftTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true, reservedSize: 50, interval: yInterval,
+                      getTitlesWidget: (value, meta) {
+                        if (value == meta.max) return const SizedBox.shrink();
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 16.0),
+                          child: Text(value.toInt().toString(), textAlign: TextAlign.right, style: const TextStyle(color: Colors.white38, fontSize: 12, fontWeight: FontWeight.w700, fontFeatures: [FontFeature.tabularFigures()])),
+                        );
+                      },
+                    ),
+                  ),
                   bottomTitles: AxisTitles(
                     sideTitles: SideTitles(
-                      showTitles: true,
-                      reservedSize: 46,
-                      interval: 1,
+                      showTitles: true, reservedSize: 40, interval: 1,
                       getTitlesWidget: (value, meta) {
                         int index = value.toInt();
                         if (index >= 0 && index < _displayedData.length) {
-
-                          String displayText = "";
-
-                          if (_currentFilter == ChartFilter.hourly) {
-                            int step = _displayedData.length > 16 ? 3 : (_displayedData.length > 10 ? 2 : 1);
-                            if (index % step != 0 && index != _displayedData.length - 1) {
-                              return const SizedBox.shrink();
-                            }
-                            String rawTime = _displayedData[index].time;
-                            displayText = "${rawTime.split(':')[0]}h";
-
-                          } else {
-                            String dateStr = _displayedData[index].date;
-                            List<String> parts = dateStr.split('/');
-                            if (parts.length == 3) {
-                              DateTime dt = DateTime(int.parse(parts[2]), int.parse(parts[1]), int.parse(parts[0]));
-                              List<String> shortDaysEn = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-                              List<String> shortDaysFr = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
-                              String shortDay = _isFrench ? shortDaysFr[dt.weekday - 1] : shortDaysEn[dt.weekday - 1];
-                              String shortDate = dateStr.substring(0, 5);
-                              displayText = "$shortDay\n$shortDate";
-                            } else {
-                              displayText = dateStr.substring(0, 5);
-                            }
-                          }
-
-                          return Padding(
-                              padding: const EdgeInsets.only(top: 8.0),
-                              child: Text(
-                                  displayText,
-                                  textAlign: TextAlign.center,
-                                  style: const TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold)
-                              )
-                          );
+                          String displayText = _currentFilter == ChartFilter.hourly ? _displayedData[index].time.split(':')[0] : _displayedData[index].date.substring(0, 5);
+                          return Padding(padding: const EdgeInsets.only(top: 12.0), child: Text(displayText, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 0.5)));
                         }
                         return const SizedBox.shrink();
                       },
