@@ -192,10 +192,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     // Push to Firebase
     await FirebaseSyncService.uploadDailySummary(
-      hourlyData: _displayedData,
+      perDoorData: _perDoorData, // 🚀 CHANGED: Pass the map of all cameras!
       totalIn: _totalIn,
       totalOut: _totalOut,
-      posDataForToday: posDataForToday,
+      posDataForToday: null,
     );
 
     if (mounted) {
@@ -1474,34 +1474,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
           _buildLanguageToggle(),
           const SizedBox(width: 32),
 
-          InkWell(
-            onTap: _showEditStoreProfileDialog,
-            borderRadius: BorderRadius.circular(8),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: Row(
-                children: [
-                  Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(_storeLocation.toUpperCase(), style: const TextStyle(color: Colors.white38, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
-                      Text(_storeName, style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
-                    ],
+          // 🚀 REMOVED InkWell to make this view-only for local store staff
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
+              children: [
+                Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(_storeLocation.toUpperCase(), style: const TextStyle(color: Colors.white38, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
+                    Text(_storeName, style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                const SizedBox(width: 20),
+                Container(
+                  width: 60, height: 60,
+                  decoration: BoxDecoration(
+                    color: _cardDark,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white.withOpacity(0.1), width: 1),
+                    image: _storeLogoPath != null ? DecorationImage(image: FileImage(File(_storeLogoPath!)), fit: BoxFit.cover) : null,
                   ),
-                  const SizedBox(width: 20),
-                  Container(
-                    width: 60, height: 60,
-                    decoration: BoxDecoration(
-                      color: _cardDark,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white.withOpacity(0.1), width: 1),
-                      image: _storeLogoPath != null ? DecorationImage(image: FileImage(File(_storeLogoPath!)), fit: BoxFit.cover) : null,
-                    ),
-                    child: _storeLogoPath == null ? Icon(Icons.storefront, color: _accentCyan, size: 28) : null,
-                  ),
-                ],
-              ),
+                  child: _storeLogoPath == null ? Icon(Icons.storefront, color: _accentCyan, size: 28) : null,
+                ),
+              ],
             ),
           ),
         ],

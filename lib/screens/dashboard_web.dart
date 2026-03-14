@@ -22,7 +22,6 @@ class DashboardWeb extends StatefulWidget {
 class _DashboardWebState extends State<DashboardWeb> {
   List<PeopleCount> _rawData = [];
   List<PeopleCount> _displayedData = [];
-  Map<String, List<PeopleCount>> _perDoorData = {};
 
   bool _isLoading = true;
   ChartFilter _currentFilter = ChartFilter.hourly;
@@ -32,6 +31,7 @@ class _DashboardWebState extends State<DashboardWeb> {
   int _workingMinuteStart = 0;
   int _workingMinuteEnd = 1439;
 
+  // 🚀 Camera Variables
   List<String> _availableCameras = ['All Doors'];
   String _selectedCamera = 'All Doors';
 
@@ -43,14 +43,10 @@ class _DashboardWebState extends State<DashboardWeb> {
   int _currentClients = 0;
   int _currentArticles = 0;
 
-  bool _isCompareMode = false;
-  List<PeopleCount> _compareDisplayedData = [];
-  int _compareTotalVisitors = 0;
-  double _compareCa = 0;
-  int _compareClients = 0;
-  int _compareArticles = 0;
+  String _loggedInUserName = "Loading...";
+  String _loggedInRole = "client";
+  String _clientId = "";
 
-  // Cloud Variables
   String _storeName = "Loading...";
   String _storeLocation = "CLOUD";
   String _selectedStoreId = "";
@@ -60,7 +56,6 @@ class _DashboardWebState extends State<DashboardWeb> {
   final Color _cardDark = const Color(0xFF1E293B);
   final Color _accentCyan = const Color(0xFF06B6D4);
   final Color _accentMagenta = const Color(0xFFD946EF);
-  final Color _accentGrey = const Color(0xFF64748B);
 
   @override
   void initState() {
@@ -68,11 +63,10 @@ class _DashboardWebState extends State<DashboardWeb> {
     _loadLanguagePref();
     _loadWorkingHoursPref();
 
-    // Default to today
     DateTime today = DateTime.now();
     _selectedDateRange = DateTimeRange(start: today, end: today);
 
-    _fetchUserStores(); // 🚀 Fetch allowed stores from Firebase!
+    _verifyUserAndLoadStores();
   }
 
   Future<void> _loadWorkingHoursPref() async {
@@ -103,16 +97,46 @@ class _DashboardWebState extends State<DashboardWeb> {
     }
   }
 
-  // ===========================================================================
-  // 🚀 FIREBASE CLOUD DATA FETCHING
-  // ===========================================================================
-
-  Future<void> _fetchUserStores() async {
+  Future<void> _verifyUserAndLoadStores() async {
     setState(() => _isLoading = true);
     try {
-      // In a real app, you might query a 'users' collection to find allowed stores.
-      // For testing, we will just grab ALL stores in the database.
-      QuerySnapshot storeSnapshot = await FirebaseFirestore.instance.collection('stores').get();
+      User? currentUser = FirebaseAuth.instance.currentUser;
+      if (currentUser == null) {
+        _signOut();
+        return;
+      }
+
+      DocumentSnapshot userDoc = await FirebaseFirestore.instance.collection('users').doc(currentUser.uid).get();
+
+      if (!userDoc.exists || userDoc.data() == null) {
+        setState(() {
+          _storeName = _isFrench ? "Accès Refusé" : "Access Denied";
+          _isLoading = false;
+        });
+        return;
+      }
+
+      var userData = userDoc.data() as Map<String, dynamic>;
+
+      setState(() {
+        _loggedInUserName = userData['full_name'] ?? "User";
+        _loggedInRole = userData['role'] ?? "client";
+        _clientId = userData['client_id'] ?? userData['client_brand'] ?? "";
+      });
+
+      if (_clientId.isEmpty) {
+        setState(() {
+          _storeName = _isFrench ? "Aucun ID Client Assigné" : "No Client ID Assigned";
+          _isLoading = false;
+        });
+        return;
+      }
+
+      QuerySnapshot storeSnapshot = await FirebaseFirestore.instance
+          .collection('clients')
+          .doc(_clientId)
+          .collection('stores')
+          .get();
 
       List<Map<String, dynamic>> stores = [];
       for (var doc in storeSnapshot.docs) {
@@ -133,18 +157,18 @@ class _DashboardWebState extends State<DashboardWeb> {
         await _fetchCloudDataForDateRange();
       } else {
         setState(() {
-          _storeName = "No Stores Found";
+          _storeName = _isFrench ? "Aucun Magasin Synchronisé" : "No Stores Synced Yet";
           _isLoading = false;
         });
       }
     } catch (e) {
-      debugPrint("Error fetching stores: $e");
+      debugPrint("Error verifying user or fetching stores: $e");
       setState(() => _isLoading = false);
     }
   }
 
   Future<void> _fetchCloudDataForDateRange() async {
-    if (_selectedDateRange == null || _selectedStoreId.isEmpty) return;
+    if (_selectedDateRange == null || _selectedStoreId.isEmpty || _clientId.isEmpty) return;
     setState(() => _isLoading = true);
 
     try {
@@ -154,11 +178,12 @@ class _DashboardWebState extends State<DashboardWeb> {
       List<PeopleCount> loadedData = [];
       _currentCa = 0; _currentClients = 0; _currentArticles = 0;
 
-      // Loop through selected dates and fetch documents from Firestore
       for (DateTime d = start; d.isBefore(end.add(const Duration(days: 1))); d = d.add(const Duration(days: 1))) {
         String dateKey = "${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
 
         DocumentSnapshot doc = await FirebaseFirestore.instance
+            .collection('clients')
+            .doc(_clientId)
             .collection('stores')
             .doc(_selectedStoreId)
             .collection('daily_traffic')
@@ -168,22 +193,39 @@ class _DashboardWebState extends State<DashboardWeb> {
         if (doc.exists && doc.data() != null) {
           Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
 
-          // 1. Parse Hourly Traffic
-          if (data.containsKey('hourly_data')) {
+          // 🚀 PARSE NEW MULTI-CAMERA STRUCTURE
+          if (data.containsKey('cameras')) {
+            Map<String, dynamic> cameras = data['cameras'];
+            cameras.forEach((cameraName, hourly) {
+              if (hourly is Map) {
+                hourly.forEach((time, counts) {
+                  loadedData.add(PeopleCount(
+                    date: "${d.day.toString().padLeft(2,'0')}/${d.month.toString().padLeft(2,'0')}/${d.year}",
+                    time: time,
+                    doorName: cameraName, // Extract specific camera name!
+                    inCount: counts['in'] ?? 0,
+                    outCount: counts['out'] ?? 0,
+                    shopId: _selectedStoreId,
+                  ));
+                });
+              }
+            });
+          }
+          // 🚀 BACKWARDS COMPATIBILITY FOR OLD DATA
+          else if (data.containsKey('hourly_data')) {
             Map<String, dynamic> hourly = data['hourly_data'];
             hourly.forEach((time, counts) {
               loadedData.add(PeopleCount(
                 date: "${d.day.toString().padLeft(2,'0')}/${d.month.toString().padLeft(2,'0')}/${d.year}",
                 time: time,
-                doorName: "Main Door",
+                doorName: "All Doors",
                 inCount: counts['in'] ?? 0,
                 outCount: counts['out'] ?? 0,
-                shopId: _selectedStoreId, // 🚀 NEW: Add this missing parameter!
+                shopId: _selectedStoreId,
               ));
             });
           }
 
-          // 2. Parse POS Data
           if (data.containsKey('pos')) {
             _currentCa += (data['pos']['ca'] ?? 0).toDouble();
             _currentClients += (data['pos']['clients'] ?? 0) as int;
@@ -206,7 +248,22 @@ class _DashboardWebState extends State<DashboardWeb> {
 
   void _applyFilter() {
     setState(() {
+      // 1. Build dynamic camera list based on available data
+      Set<String> cams = {'All Doors'};
+      for (var item in _rawData) {
+        cams.add(item.doorName);
+      }
+      _availableCameras = cams.toList();
+
+      // Reset if selected camera doesn't exist in new date range
+      if (!_availableCameras.contains(_selectedCamera)) {
+        _selectedCamera = 'All Doors';
+      }
+
+      // 2. Filter data by working hours AND the selected camera
       List<PeopleCount> filteredData = _rawData.where((item) {
+        if (item.doorName != _selectedCamera) return false; // 🚀 CAMERA FILTER
+
         var timeParts = item.time.split(':');
         int hour = timeParts.isNotEmpty ? (int.tryParse(timeParts[0]) ?? 0) : 0;
         int minute = timeParts.length > 1 ? (int.tryParse(timeParts[1]) ?? 0) : 0;
@@ -235,7 +292,7 @@ class _DashboardWebState extends State<DashboardWeb> {
   }
 
   // ===========================================================================
-  // 🚀 UI BUILDERS (Identical to Windows App)
+  // 🚀 UI BUILDERS
   // ===========================================================================
 
   void _shiftDate(int days) {
@@ -271,35 +328,45 @@ class _DashboardWebState extends State<DashboardWeb> {
   }
 
   String _getFormattedDateString() {
-    if (_selectedDateRange == null) return "All Time";
-    List<String> months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    if (_selectedDateRange == null) return _isFrench ? "De tout temps" : "All Time";
+
+    List<String> monthsEn = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    List<String> monthsFr = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc'];
+    List<String> months = _isFrench ? monthsFr : monthsEn;
+
     DateTime start = _selectedDateRange!.start, end = _selectedDateRange!.end;
 
     if (start.isAtSameMomentAs(end) || end.difference(start).inDays == 0) {
-      return "${months[start.month - 1]} ${start.day}, ${start.year}";
+      return _isFrench
+          ? "${start.day} ${months[start.month - 1]} ${start.year}"
+          : "${months[start.month - 1]} ${start.day}, ${start.year}";
     }
     return "${months[start.month - 1]} ${start.day} - ${months[end.month - 1]} ${end.day}";
   }
 
-  // --- TOP BAR & STORE SELECTOR ---
   void _showStoreSelectorDialog() {
+    if (_userStores.isEmpty) return;
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: _cardDark,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: BorderSide(color: Colors.white.withOpacity(0.1))),
-        title: Text(_isFrench ? 'Changer de Magasin' : 'Switch Store', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        title: Text(_isFrench ? 'Vos Magasins ($_clientId)' : 'Your Stores ($_clientId)', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         content: SizedBox(
           width: 300,
-          child: ListView.builder(
+          child: ListView.separated(
             shrinkWrap: true,
             itemCount: _userStores.length,
+            separatorBuilder: (context, index) => Divider(color: Colors.white.withOpacity(0.1)),
             itemBuilder: (context, index) {
               var store = _userStores[index];
+              bool isSelected = _selectedStoreId == store['id'];
               return ListTile(
-                leading: Icon(Icons.storefront, color: _accentCyan),
-                title: Text(store['brand'], style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                subtitle: Text(store['location'], style: const TextStyle(color: Colors.white54)),
+                leading: Icon(Icons.storefront, color: isSelected ? _accentCyan : Colors.white54),
+                title: Text(store['brand'], style: TextStyle(color: isSelected ? Colors.white : Colors.white70, fontWeight: FontWeight.bold)),
+                subtitle: Text(store['location'], style: TextStyle(color: isSelected ? _accentCyan : Colors.white54)),
+                trailing: isSelected ? Icon(Icons.check_circle, color: _accentCyan) : null,
                 onTap: () {
                   setState(() {
                     _selectedStoreId = store['id'];
@@ -312,6 +379,72 @@ class _DashboardWebState extends State<DashboardWeb> {
               );
             },
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLanguageToggle() {
+    return GestureDetector(
+      onTap: _toggleLanguage,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 300),
+        width: 100,
+        height: 44,
+        padding: const EdgeInsets.all(4),
+        decoration: BoxDecoration(
+          color: _cardDark,
+          borderRadius: BorderRadius.circular(30),
+          border: Border.all(color: Colors.white.withOpacity(0.1), width: 1),
+        ),
+        child: Stack(
+          children: [
+            AnimatedAlign(
+              duration: const Duration(milliseconds: 400),
+              curve: Curves.easeOutBack,
+              alignment: _isFrench ? Alignment.centerRight : Alignment.centerLeft,
+              child: Container(
+                width: 46,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: _bgDark,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(color: Colors.black.withOpacity(0.3), blurRadius: 4, offset: const Offset(0, 2)),
+                  ],
+                ),
+              ),
+            ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                Expanded(
+                  child: Center(
+                    child: AnimatedDefaultTextStyle(
+                      duration: const Duration(milliseconds: 200),
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800, fontSize: 14, letterSpacing: 1,
+                        color: !_isFrench ? _accentCyan : Colors.white38,
+                      ),
+                      child: const Text('EN'),
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Center(
+                    child: AnimatedDefaultTextStyle(
+                      duration: const Duration(milliseconds: 200),
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800, fontSize: 14, letterSpacing: 1,
+                        color: _isFrench ? _accentCyan : Colors.white38,
+                      ),
+                      child: const Text('FR'),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );
@@ -335,37 +468,68 @@ class _DashboardWebState extends State<DashboardWeb> {
           ),
           const Spacer(),
 
-          InkWell(
-            onTap: _showStoreSelectorDialog,
-            borderRadius: BorderRadius.circular(8),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: Row(
-                children: [
-                  Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(_storeLocation.toUpperCase(), style: const TextStyle(color: Colors.white38, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
-                      Text(_storeName, style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                  const SizedBox(width: 20),
+          _buildLanguageToggle(),
+          const SizedBox(width: 32),
+
+          if (_userStores.isNotEmpty)
+            Row(
+              children: [
+                // 🚀 CAMERA SELECTOR DROPDOWN
+                if (_availableCameras.length > 1)
                   Container(
-                    width: 50, height: 50,
-                    decoration: BoxDecoration(color: _cardDark, shape: BoxShape.circle, border: Border.all(color: _accentCyan, width: 2)),
-                    child: const Icon(Icons.arrow_drop_down, color: Colors.white, size: 28),
+                    margin: const EdgeInsets.only(right: 16),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    decoration: BoxDecoration(color: _cardDark, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.white.withOpacity(0.1))),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        value: _selectedCamera,
+                        dropdownColor: _cardDark,
+                        icon: Icon(Icons.videocam, color: _accentCyan, size: 20),
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                        items: _availableCameras.map((cam) => DropdownMenuItem(value: cam, child: Padding(padding: const EdgeInsets.only(right: 8), child: Text(cam)))).toList(),
+                        onChanged: (val) {
+                          if (val != null) {
+                            setState(() => _selectedCamera = val);
+                            _applyFilter();
+                          }
+                        },
+                      ),
+                    ),
                   ),
-                ],
-              ),
+
+                // STORE SELECTOR
+                InkWell(
+                  onTap: _showStoreSelectorDialog,
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    child: Row(
+                      children: [
+                        Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(_storeLocation.toUpperCase(), style: const TextStyle(color: Colors.white38, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
+                            Text(_storeName, style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                        const SizedBox(width: 20),
+                        Container(
+                          width: 50, height: 50,
+                          decoration: BoxDecoration(color: _cardDark, shape: BoxShape.circle, border: Border.all(color: _accentCyan, width: 2)),
+                          child: const Icon(Icons.arrow_drop_down, color: Colors.white, size: 28),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ),
         ],
       ),
     );
   }
 
-  // --- HERO CHART ---
   Widget _buildHeroChart() {
     int totalVisitors = (_totalIn + _totalOut) ~/ 2;
     List<LineChartBarData> chartLines = [];
@@ -442,7 +606,6 @@ class _DashboardWebState extends State<DashboardWeb> {
     );
   }
 
-  // --- BENTO GRID ---
   Widget _buildBentoGrid() {
     int totalVisitors = (_totalIn + _totalOut) ~/ 2;
     double conversionRate = totalVisitors > 0 ? (_currentClients / totalVisitors) * 100 : 0.0;
@@ -451,10 +614,10 @@ class _DashboardWebState extends State<DashboardWeb> {
 
     return Row(
       children: [
-        Expanded(flex: 2, child: _buildBentoCard(title: 'REVENUE', value: _currentCa.toStringAsFixed(0), unit: 'DZD', icon: Icons.account_balance_wallet_rounded, color: const Color(0xFF38EF7D))), const SizedBox(width: 24),
-        Expanded(flex: 1, child: _buildBentoCard(title: 'CONV. RATE', value: conversionRate.toStringAsFixed(1), unit: '%', icon: Icons.track_changes_rounded, color: const Color(0xFFFF512F))), const SizedBox(width: 24),
-        Expanded(flex: 1, child: _buildBentoCard(title: 'AVG BASKET', value: avgBasket.toStringAsFixed(0), unit: 'DZD', icon: Icons.shopping_bag_rounded, color: const Color(0xFF00C6FF))), const SizedBox(width: 24),
-        Expanded(flex: 1, child: _buildBentoCard(title: 'U.P.T', value: upt.toStringAsFixed(2), unit: 'ART', icon: Icons.layers_rounded, color: const Color(0xFF8E2DE2))),
+        Expanded(flex: 2, child: _buildBentoCard(title: _isFrench ? "CHIFFRE D'AFFAIRES" : 'REVENUE', value: _currentCa.toStringAsFixed(0), unit: 'DZD', icon: Icons.account_balance_wallet_rounded, color: const Color(0xFF38EF7D))), const SizedBox(width: 24),
+        Expanded(flex: 1, child: _buildBentoCard(title: _isFrench ? 'TAUX DE CONV.' : 'CONV. RATE', value: conversionRate.toStringAsFixed(1), unit: '%', icon: Icons.track_changes_rounded, color: const Color(0xFFFF512F))), const SizedBox(width: 24),
+        Expanded(flex: 1, child: _buildBentoCard(title: _isFrench ? 'PANIER MOYEN' : 'AVG BASKET', value: avgBasket.toStringAsFixed(0), unit: 'DZD', icon: Icons.shopping_bag_rounded, color: const Color(0xFF00C6FF))), const SizedBox(width: 24),
+        Expanded(flex: 1, child: _buildBentoCard(title: _isFrench ? 'INDICE DE VENTE' : 'U.P.T', value: upt.toStringAsFixed(2), unit: 'ART', icon: Icons.layers_rounded, color: const Color(0xFF8E2DE2))),
       ],
     );
   }
@@ -482,7 +645,6 @@ class _DashboardWebState extends State<DashboardWeb> {
     );
   }
 
-  // --- SIDEBAR ---
   Widget _buildSidebar() {
     return Container(
       width: 260, color: _cardDark,
@@ -492,16 +654,42 @@ class _DashboardWebState extends State<DashboardWeb> {
           Icon(Icons.cloud, color: _accentCyan, size: 60),
           const SizedBox(height: 16),
           const Text('BoitexInfo', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w900, color: Colors.white)),
-          Text('CLOUD DASHBOARD', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: _accentCyan, letterSpacing: 2.0)),
+          Text(_isFrench ? 'TABLEAU DE BORD CLOUD' : 'CLOUD DASHBOARD', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: _accentCyan, letterSpacing: 2.0)),
           const SizedBox(height: 40),
 
-          ListTile(leading: Icon(Icons.dashboard, color: _accentCyan), title: const Text('Dashboard', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold))),
-          ListTile(leading: const Icon(Icons.download, color: Colors.white54), title: const Text('Export Reports', style: TextStyle(color: Colors.white54))),
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+                color: _bgDark,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white.withOpacity(0.05))
+            ),
+            child: Row(
+              children: [
+                CircleAvatar(backgroundColor: _accentCyan.withOpacity(0.2), child: Icon(Icons.person, color: _accentCyan, size: 20)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(_loggedInUserName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis),
+                      Text(_loggedInRole.toUpperCase(), style: const TextStyle(color: Colors.white54, fontSize: 10, letterSpacing: 1.0)),
+                    ],
+                  ),
+                )
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          ListTile(leading: Icon(Icons.dashboard, color: _accentCyan), title: Text(_isFrench ? 'Tableau de bord' : 'Dashboard', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold))),
+          ListTile(leading: const Icon(Icons.download, color: Colors.white54), title: Text(_isFrench ? 'Exporter Rapports' : 'Export Reports', style: const TextStyle(color: Colors.white54))),
 
           const Spacer(),
           ListTile(
             leading: const Icon(Icons.logout, color: Colors.redAccent),
-            title: const Text('Sign Out', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+            title: Text(_isFrench ? 'Déconnexion' : 'Sign Out', style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
             onTap: _signOut,
           ),
           const SizedBox(height: 20),
@@ -529,11 +717,10 @@ class _DashboardWebState extends State<DashboardWeb> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // Date Picker Row
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            const Text('Command Center', style: TextStyle(fontSize: 36, fontWeight: FontWeight.w900, color: Colors.white)),
+                            Text(_isFrench ? "Vue d'Ensemble" : 'Command Center', style: const TextStyle(fontSize: 36, fontWeight: FontWeight.w900, color: Colors.white)),
                             Container(
                               decoration: BoxDecoration(color: _cardDark, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.white.withOpacity(0.1))),
                               child: Row(
@@ -549,22 +736,21 @@ class _DashboardWebState extends State<DashboardWeb> {
                         const SizedBox(height: 32),
 
                         if (_rawData.isEmpty)
-                          Center(child: Padding(padding: const EdgeInsets.all(80.0), child: Text("No data found for this date.", style: TextStyle(color: Colors.white54, fontSize: 20))))
+                          Center(child: Padding(padding: const EdgeInsets.all(80.0), child: Text(_isFrench ? "Aucune donnée trouvée pour ce magasin à cette date." : "No data found for this store on this date.", style: const TextStyle(color: Colors.white54, fontSize: 18))))
                         else ...[
                           _buildHeroChart(),
                           const SizedBox(height: 32),
 
-                          // Placeholder for Camera Feed
                           Container(
                             width: double.infinity, padding: const EdgeInsets.all(32),
                             decoration: BoxDecoration(color: _cardDark, borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.white.withOpacity(0.1))),
-                            child: const Column(
+                            child: Column(
                               children: [
-                                Icon(Icons.videocam_off, color: Colors.white24, size: 48),
-                                SizedBox(height: 16),
-                                Text('Live Feed Unavailable Remotely', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-                                SizedBox(height: 8),
-                                Text('For security reasons, live camera streams can only be viewed on the local store PC.', style: TextStyle(color: Colors.white54)),
+                                const Icon(Icons.videocam_off, color: Colors.white24, size: 48),
+                                const SizedBox(height: 16),
+                                Text(_isFrench ? 'Flux en direct indisponible à distance' : 'Live Feed Unavailable Remotely', style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                                const SizedBox(height: 8),
+                                Text(_isFrench ? 'Pour des raisons de sécurité, les flux des caméras ne peuvent être consultés que sur le PC local du magasin.' : 'For security reasons, live camera streams can only be viewed on the local store PC.', style: const TextStyle(color: Colors.white54)),
                               ],
                             ),
                           ),

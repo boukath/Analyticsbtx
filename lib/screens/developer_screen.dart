@@ -4,6 +4,9 @@ import 'package:flutter/material.dart';
 import 'camera_ftp_setup_screen.dart';
 import 'ftp_server_screen.dart';
 import 'cloud_sync_screen.dart';
+import 'create_user_screen.dart';
+import 'manage_users_screen.dart';
+import 'store_profile_screen.dart';
 
 class DeveloperScreen extends StatelessWidget {
   final bool isFrench;
@@ -60,6 +63,37 @@ class DeveloperScreen extends StatelessWidget {
                 mainAxisSpacing: 24,
                 childAspectRatio: 3.0,
                 children: [
+                  // 🚀 NEW CARD: Create User
+                  _buildDevCard(
+                    context,
+                    title: isFrench ? 'Créer un utilisateur' : 'Create User',
+                    subtitle: isFrench ? 'Ajouter un compte client' : 'Add client account',
+                    icon: Icons.person_add,
+                    color: Colors.tealAccent,
+                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => CreateUserScreen(isFrench: isFrench))),
+                  ),
+
+                  // 🚀 NEW CARD: Manage Users
+                  _buildDevCard(
+                    context,
+                    title: isFrench ? 'Gérer les utilisateurs' : 'Manage Users',
+                    subtitle: isFrench ? 'Voir la liste des clients' : 'View client list',
+                    icon: Icons.people_alt,
+                    color: Colors.pinkAccent,
+                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => ManageUsersScreen(isFrench: isFrench))),
+                  ),
+
+                  // 🚀 NEW CARD: Store Profile
+                  _buildDevCard(
+                    context,
+                    title: isFrench ? 'Profil du Magasin' : 'Store Profile',
+                    subtitle: isFrench ? 'Nom, emplacement et logo' : 'Name, location, and logo',
+                    icon: Icons.storefront,
+                    color: Colors.lightBlueAccent,
+                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => StoreProfileScreen(isFrench: isFrench))),
+                  ),
+
+                  // (Your existing cards follow below...)
                   _buildDevCard(
                     context,
                     title: isFrench ? 'Source de données' : 'Data Source',

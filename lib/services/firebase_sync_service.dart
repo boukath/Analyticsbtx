@@ -5,7 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/people_count.dart';
-
+import '../core/data_aggregator.dart'; // 🚀 Add this import
 class FirebaseSyncService {
   static Timer? _scheduleTimer;
 
@@ -43,44 +43,57 @@ class FirebaseSyncService {
     });
   }
 
-  /// Pushes the aggregated dashboard data to Firebase Firestore
+  // 🚀 CHANGED: Accepts perDoorData instead of hourlyData
   static Future<void> uploadDailySummary({
-    required List<PeopleCount> hourlyData,
+    required Map<String, List<PeopleCount>> perDoorData,
     required int totalIn,
     required int totalOut,
     required Map<String, dynamic>? posDataForToday,
   }) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-
-      String storeId = prefs.getString('firebase_store_id') ?? '';
+      String clientId = prefs.getString('firebase_client_id') ?? '';
       String brandName = prefs.getString('store_name') ?? 'Unknown Brand';
       String locationName = prefs.getString('store_location') ?? 'Unknown Location';
 
-      if (storeId.isEmpty) {
-        debugPrint("⚠️ FirebaseSyncService: No Firebase Store ID configured. Skipping sync.");
-        return;
-      }
+      if (clientId.isEmpty) return;
 
-      // --- 1. UPDATE THE PARENT STORE DOCUMENT (Metadata) ---
-      // This ensures your Web Dashboard always knows the latest Brand and Location names
-      await FirebaseFirestore.instance.collection('stores').doc(storeId).set({
-        'brand': brandName,
-        'location': locationName,
-        'last_active_sync': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      String specificStoreId = "${brandName}_$locationName".replaceAll(' ', '_').toLowerCase();
 
+      // ... (Keep your existing client/store document updates here) ...
 
-      // --- 2. FORMAT THE HOURLY TRAFFIC DATA ---
       final now = DateTime.now();
       String dateKey = "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
+      bool syncDetailedCameras = prefs.getBool('sync_individual_cameras') ?? false;
 
-      Map<String, dynamic> hourlyMap = {};
-      for (var item in hourlyData) {
-        hourlyMap[item.time] = {
-          'in': item.inCount,
-          'out': item.outCount,
-        };
+      // 🚀 NEW: Format the hourly traffic data for EACH individual camera
+      Map<String, dynamic> camerasPayload = {};
+
+      if (syncDetailedCameras) {
+        // 🔹 PREMIUM MODE: Upload every camera individually
+        perDoorData.forEach((doorName, counts) {
+          Map<String, dynamic> hourlyMap = {};
+          var hourly = DataAggregator.aggregateByHour(counts);
+          for (var item in hourly) {
+            hourlyMap[item.time] = {'in': item.inCount, 'out': item.outCount};
+          }
+          camerasPayload[doorName] = hourlyMap;
+        });
+      } else {
+        // 🔹 STANDARD MODE: Merge everything to save Firebase space!
+        List<PeopleCount> allMergedData = [];
+        perDoorData.forEach((doorName, counts) {
+          allMergedData.addAll(counts);
+        });
+
+        Map<String, dynamic> hourlyMap = {};
+        var hourly = DataAggregator.aggregateByHour(allMergedData);
+        for (var item in hourly) {
+          hourlyMap[item.time] = {'in': item.inCount, 'out': item.outCount};
+        }
+
+        // Save it under a single generic key
+        camerasPayload['All Doors'] = hourlyMap;
       }
 
       Map<String, dynamic> payload = {
@@ -88,10 +101,9 @@ class FirebaseSyncService {
         'last_updated': FieldValue.serverTimestamp(),
         'total_in': totalIn,
         'total_out': totalOut,
-        'hourly_data': hourlyMap,
+        'cameras': camerasPayload, // Pushing the optimized map!
       };
 
-      // --- 3. ADD POS DATA (If Available) ---
       if (posDataForToday != null) {
         payload['pos'] = {
           'ca': posDataForToday['ca'] ?? 0,
@@ -100,18 +112,15 @@ class FirebaseSyncService {
         };
       }
 
-      // --- 4. UPLOAD TO DAILY TRAFFIC SUB-COLLECTION ---
       await FirebaseFirestore.instance
-          .collection('stores')
-          .doc(storeId)
-          .collection('daily_traffic')
-          .doc(dateKey)
+          .collection('clients').doc(clientId)
+          .collection('stores').doc(specificStoreId)
+          .collection('daily_traffic').doc(dateKey)
           .set(payload, SetOptions(merge: true));
 
-      debugPrint("✅ FirebaseSyncService: Successfully synced data for $dateKey ($brandName - $locationName)!");
-
+      debugPrint("✅ FirebaseSyncService: Successfully synced multi-camera data!");
     } catch (e) {
-      debugPrint("❌ FirebaseSyncService: Failed to sync to Firestore: $e");
+      debugPrint("❌ FirebaseSyncService: Failed to sync: $e");
     }
   }
 
