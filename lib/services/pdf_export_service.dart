@@ -2,12 +2,14 @@
 
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart'; // 🚀 NEW: For kIsWeb
+import 'package:printing/printing.dart';  // 🚀 NEW: For web PDF sharing
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import '../models/people_count.dart';
 
 class PdfExportService {
-  /// Generates a premium PDF and saves it directly to the local disk.
+  /// Generates a premium PDF and saves it directly to the local disk (or downloads on Web).
   static Future<void> generateAndSaveReport({
     required String reportType,
     required String dateRangeText,
@@ -42,7 +44,9 @@ class PdfExportService {
 
     // 🚀 3. Load the Store Logo if it exists
     pw.MemoryImage? logoImage;
-    if (storeLogoPath != null && storeLogoPath.isNotEmpty) {
+    // 🌐 WEB SAFETY: dart:io File operations crash on the web.
+    // We only attempt to load the local logo file if we are NOT on the web.
+    if (!kIsWeb && storeLogoPath != null && storeLogoPath.isNotEmpty) {
       final file = File(storeLogoPath);
       if (file.existsSync()) {
         logoImage = pw.MemoryImage(file.readAsBytesSync());
@@ -186,10 +190,20 @@ class PdfExportService {
       ),
     );
 
-    // 5. SILENTLY SAVE THE FILE TO THE DISK
-    final File file = File(outputPath);
+    // 🚀 5. SAVE OR DOWNLOAD THE FILE
     final Uint8List bytes = await pdf.save();
-    await file.writeAsBytes(bytes);
+
+    if (kIsWeb) {
+      // 🌐 WEB BEHAVIOR: Trigger the browser's native print/download dialog
+      await Printing.sharePdf(
+        bytes: bytes,
+        filename: 'Traffic_Analytics_${reportType}_$dateRangeText.pdf',
+      );
+    } else {
+      // 💻 WINDOWS BEHAVIOR: Silently save to disk
+      final File file = File(outputPath);
+      await file.writeAsBytes(bytes);
+    }
   }
 
   // Helper widget to draw the premium summary boxes in the PDF

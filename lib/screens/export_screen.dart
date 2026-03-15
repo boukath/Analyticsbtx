@@ -1,6 +1,7 @@
 // lib/screens/export_screen.dart
 
 import 'dart:io';
+import 'package:flutter/foundation.dart'; // 🚀 NEW: Required for kIsWeb
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/people_count.dart';
@@ -121,23 +122,13 @@ class _ExportScreenState extends State<ExportScreen> {
     avgBasket = totalClients > 0 ? (totalRevenue / totalClients) : 0.0;
     upt = totalClients > 0 ? (totalArticles / totalClients) : 0.0;
 
-    // 🚀 3. DIRECTORY & PREFERENCES MANAGEMENT
+    // 3. DIRECTORY & PREFERENCES MANAGEMENT
     final prefs = await SharedPreferences.getInstance();
 
     // Get the Store Profile Data for the PDF
     String storeName = prefs.getString('store_name') ?? "My Store";
     String storeLocation = prefs.getString('store_location') ?? "MAIN BRANCH";
     String? storeLogoPath = prefs.getString('store_logo_path');
-
-    // Get the base folder, default to C:\comptage if none exists
-    String baseDir = prefs.getString('saved_data_folder') ?? 'C:\\comptage';
-    String reportsDirPath = '$baseDir${Platform.pathSeparator}Reports';
-    Directory reportsDir = Directory(reportsDirPath);
-
-    // Create the "Reports" folder if it doesn't exist
-    if (!await reportsDir.exists()) {
-      await reportsDir.create(recursive: true);
-    }
 
     // 🚀 4. SMART FILE NAMING
     String sStart = "${_selectedDateRange.start.year}-${_selectedDateRange.start.month.toString().padLeft(2, '0')}-${_selectedDateRange.start.day.toString().padLeft(2, '0')}";
@@ -153,66 +144,87 @@ class _ExportScreenState extends State<ExportScreen> {
 
     String rType = _currentFilter == ChartFilter.hourly ? "Hourly Breakdown" : "Daily Summary Breakdown";
 
-    // 🚀 UPDATED TITLE LOGIC: Exact camera name or proper "All Doors" translation
     String cLabel = _selectedCamera == 'All Doors'
         ? (widget.isFrench ? 'Global (Toutes les Portes)' : 'Global (All Doors)')
         : _selectedCamera;
 
     String dateRangeStr = sStart == sEnd ? sStart : "$sStart to $sEnd";
 
-    // 5. Trigger the Export Services
-    if (format == 'pdf') {
-      String fullPdfPath = "${reportsDir.path}${Platform.pathSeparator}$niceFileName.pdf";
+    // 🚀 5. CROSS-PLATFORM PATH RESOLUTION
+    String finalOutputPath = "";
+    String folderPathToOpen = "";
 
-      await PdfExportService.generateAndSaveReport(
-        reportType: rType,
-        dateRangeText: dateRangeStr,
-        cameraName: cLabel,
-        data: finalData,
-        totalIn: totalIn,
-        totalOut: totalOut,
-        peakHour: peakHour,
-        outputPath: fullPdfPath,
-        // 🚀 PASSED STORE PROFILE DATA HERE
-        storeName: storeName,
-        storeLocation: storeLocation,
-        storeLogoPath: storeLogoPath,
-        // POS Data
-        revenue: totalRevenue,
-        clients: totalClients,
-        conversionRate: conversionRate,
-        avgBasket: avgBasket,
-        upt: upt,
-      );
-
-      _showSuccessDialog(fullPdfPath, reportsDir.path, "PDF");
-
+    if (kIsWeb) {
+      // 🌐 WEB: We just pass a dummy name, the browser will download it automatically
+      finalOutputPath = "$niceFileName.$format";
     } else {
-      // 🚀 UPDATED CSV EXPORT BLOCK
-      String fullCsvPath = "${reportsDir.path}${Platform.pathSeparator}$niceFileName.csv";
+      // 💻 WINDOWS: Resolve the physical directory
+      String baseDir = prefs.getString('saved_data_folder') ?? 'C:\\comptage';
+      String reportsDirPath = '$baseDir${Platform.pathSeparator}Reports';
+      Directory reportsDir = Directory(reportsDirPath);
 
-      await CsvExportService.generateAndSaveCsv(
-        reportType: rType,
-        dateRangeText: dateRangeStr,
-        cameraName: cLabel,
-        data: finalData,
-        totalIn: totalIn,
-        totalOut: totalOut,
-        peakHour: peakHour,
-        outputPath: fullCsvPath, // 🚀 Pass the direct path here!
-        revenue: totalRevenue,
-        clients: totalClients,
-        conversionRate: conversionRate,
-        avgBasket: avgBasket,
-        upt: upt,
+      // Create the "Reports" folder if it doesn't exist
+      if (!await reportsDir.exists()) {
+        await reportsDir.create(recursive: true);
+      }
+
+      finalOutputPath = "${reportsDir.path}${Platform.pathSeparator}$niceFileName.$format";
+      folderPathToOpen = reportsDir.path;
+    }
+
+    // 6. Trigger the Export Services
+    try {
+      if (format == 'pdf') {
+        await PdfExportService.generateAndSaveReport(
+          reportType: rType,
+          dateRangeText: dateRangeStr,
+          cameraName: cLabel,
+          data: finalData,
+          totalIn: totalIn,
+          totalOut: totalOut,
+          peakHour: peakHour,
+          outputPath: finalOutputPath,
+          storeName: storeName,
+          storeLocation: storeLocation,
+          storeLogoPath: storeLogoPath,
+          revenue: totalRevenue,
+          clients: totalClients,
+          conversionRate: conversionRate,
+          avgBasket: avgBasket,
+          upt: upt,
+        );
+      } else {
+        await CsvExportService.generateAndSaveCsv(
+          reportType: rType,
+          dateRangeText: dateRangeStr,
+          cameraName: cLabel,
+          data: finalData,
+          totalIn: totalIn,
+          totalOut: totalOut,
+          peakHour: peakHour,
+          outputPath: finalOutputPath,
+          revenue: totalRevenue,
+          clients: totalClients,
+          conversionRate: conversionRate,
+          avgBasket: avgBasket,
+          upt: upt,
+        );
+      }
+
+      // Show dynamic success dialog
+      _showSuccessDialog(finalOutputPath, folderPathToOpen, format.toUpperCase());
+
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(widget.isFrench ? "Erreur d'exportation." : "Export error: $e"),
+            backgroundColor: Colors.redAccent,
+          )
       );
-
-      _showSuccessDialog(fullCsvPath, reportsDir.path, "CSV");
     }
   }
 
-  // 🚀 6. SUCCESS UI WITH FOLDER OPEN BUTTON
-  // Now accepts 'fileType' to show PDF or CSV dynamically
+  // 🚀 7. WEB-SAFE SUCCESS UI
   void _showSuccessDialog(String filePath, String folderPath, String fileType) {
     showDialog(
         context: context,
@@ -227,9 +239,14 @@ class _ExportScreenState extends State<ExportScreen> {
             ],
           ),
           content: Text(
-            widget.isFrench
+            // Show a different message based on whether it's downloading via Web or saving locally
+            kIsWeb
+                ? (widget.isFrench
+                ? "Le fichier $fileType a été généré et le téléchargement a commencé."
+                : "The $fileType was successfully generated and the download has started.")
+                : (widget.isFrench
                 ? "Le fichier $fileType a été généré et enregistré dans :\n\n$filePath"
-                : "The $fileType was successfully generated and saved to:\n\n$filePath",
+                : "The $fileType was successfully generated and saved to:\n\n$filePath"),
             style: const TextStyle(color: Colors.white70),
           ),
           actions: [
@@ -237,18 +254,19 @@ class _ExportScreenState extends State<ExportScreen> {
               onPressed: () => Navigator.pop(context),
               child: const Text("CLOSE", style: TextStyle(color: Colors.white54)),
             ),
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.greenAccent, foregroundColor: Colors.black),
-              onPressed: () {
-                Navigator.pop(context);
-                if (Platform.isWindows) {
-                  // Instantly opens the Windows folder!
-                  Process.run('explorer.exe', [folderPath]);
-                }
-              },
-              icon: const Icon(Icons.folder_open),
-              label: Text(widget.isFrench ? "OUVRIR LE DOSSIER" : "OPEN FOLDER", style: const TextStyle(fontWeight: FontWeight.bold)),
-            ),
+            // 🌐 WEB SAFETY: Hide the "Open Folder" button on the web completely
+            if (!kIsWeb)
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.greenAccent, foregroundColor: Colors.black),
+                onPressed: () {
+                  Navigator.pop(context);
+                  if (Platform.isWindows) {
+                    Process.run('explorer.exe', [folderPath]);
+                  }
+                },
+                icon: const Icon(Icons.folder_open),
+                label: Text(widget.isFrench ? "OUVRIR LE DOSSIER" : "OPEN FOLDER", style: const TextStyle(fontWeight: FontWeight.bold)),
+              ),
           ],
         )
     );

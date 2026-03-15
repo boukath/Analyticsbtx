@@ -2,11 +2,14 @@
 
 import 'dart:io';
 import 'dart:convert'; // Required for UTF-8 encoding
+import 'dart:typed_data'; // 🚀 NEW: Required for converting strings to bytes
+import 'package:flutter/foundation.dart'; // 🚀 NEW: Required for kIsWeb
 import 'package:flutter/material.dart';
+import 'package:file_saver/file_saver.dart'; // 🚀 NEW: Required for web downloads
 import '../models/people_count.dart';
 
 class CsvExportService {
-  /// Generates a premium, highly-structured CSV file and saves it silently to the local disk.
+  /// Generates a premium, highly-structured CSV file and saves it silently to the local disk or downloads on Web.
   static Future<void> generateAndSaveCsv({
     required String reportType,
     required String dateRangeText,
@@ -74,11 +77,28 @@ class CsvExportService {
       csv.writeln("=====================================================================");
       csv.writeln("End of Report");
 
-      // 🚀 5. Silently write to disk using explicit UTF-8 encoding
-      File file = File(outputPath);
-      await file.writeAsString(csv.toString(), encoding: utf8);
+      // 🚀 5. SAVE OR DOWNLOAD THE FILE
+      // Convert the string buffer to bytes using UTF-8
+      final Uint8List bytes = Uint8List.fromList(utf8.encode(csv.toString()));
 
-      debugPrint("✅ Premium CSV saved successfully at: $outputPath");
+      if (kIsWeb) {
+        // 🌐 WEB BEHAVIOR: Trigger browser download
+        // We clean up the file name to avoid spaces or special characters
+        String safeFileName = 'Traffic_Analytics_${reportType.replaceAll(' ', '_')}_${dateRangeText.replaceAll(' ', '_').replaceAll('/', '-')}';
+
+        await FileSaver.instance.saveFile(
+          name: safeFileName,
+          bytes: bytes,
+          ext: 'csv',
+          mimeType: MimeType.csv,
+        );
+        debugPrint("✅ Premium CSV triggered for download on Web");
+      } else {
+        // 💻 WINDOWS BEHAVIOR: Silently save to disk
+        File file = File(outputPath);
+        await file.writeAsBytes(bytes);
+        debugPrint("✅ Premium CSV saved successfully at: $outputPath");
+      }
     } catch (e) {
       debugPrint("❌ Error saving CSV: $e");
     }

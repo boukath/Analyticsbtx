@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'login_screen.dart';
+import 'export_screen.dart'; // 🚀 NEW: Import the export screen
 import '../models/people_count.dart';
 import '../core/data_aggregator.dart';
 
@@ -42,6 +43,9 @@ class _DashboardWebState extends State<DashboardWeb> {
   double _currentCa = 0;
   int _currentClients = 0;
   int _currentArticles = 0;
+
+  // 🚀 NEW: A map to hold daily POS data for the Export Screen
+  Map<String, Map<String, num>> _posDatabase = {};
 
   String _loggedInUserName = "Loading...";
   String _loggedInRole = "client";
@@ -177,6 +181,7 @@ class _DashboardWebState extends State<DashboardWeb> {
 
       List<PeopleCount> loadedData = [];
       _currentCa = 0; _currentClients = 0; _currentArticles = 0;
+      _posDatabase.clear(); // 🚀 NEW: Clear previous POS data
 
       for (DateTime d = start; d.isBefore(end.add(const Duration(days: 1))); d = d.add(const Duration(days: 1))) {
         String dateKey = "${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
@@ -224,11 +229,22 @@ class _DashboardWebState extends State<DashboardWeb> {
             });
           }
 
-          // 🚀 FIXED: Safely cast Firebase numbers to avoid `as int` crashes!
+          // 🚀 FIXED: Safely cast Firebase numbers to avoid crashes AND map them for ExportScreen
           if (data.containsKey('pos')) {
-            _currentCa += ((data['pos']['ca'] ?? 0) as num).toDouble();
-            _currentClients += ((data['pos']['clients'] ?? 0) as num).toInt();
-            _currentArticles += ((data['pos']['articles'] ?? 0) as num).toInt();
+            double dailyCa = ((data['pos']['ca'] ?? 0) as num).toDouble();
+            int dailyClients = ((data['pos']['clients'] ?? 0) as num).toInt();
+            int dailyArticles = ((data['pos']['articles'] ?? 0) as num).toInt();
+
+            _currentCa += dailyCa;
+            _currentClients += dailyClients;
+            _currentArticles += dailyArticles;
+
+            // Save this exact date's POS data into our map
+            _posDatabase[dateKey] = {
+              'ca': dailyCa,
+              'clients': dailyClients,
+              'articles': dailyArticles,
+            };
           }
         }
       }
@@ -408,6 +424,23 @@ class _DashboardWebState extends State<DashboardWeb> {
     );
   }
 
+  // 🚀 NEW: Navigation to Export Screen, passing the collected Cloud Data
+  void _navigateToExport() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ExportScreen(
+          rawData: _rawData,
+          availableCameras: _availableCameras,
+          isFrench: _isFrench,
+          workingMinuteStart: _workingMinuteStart,
+          workingMinuteEnd: _workingMinuteEnd,
+          posDatabase: _posDatabase, // Passed perfectly structured POS data here!
+        ),
+      ),
+    );
+  }
+
   Widget _buildLanguageToggle() {
     return GestureDetector(
       onTap: _toggleLanguage,
@@ -513,6 +546,27 @@ class _DashboardWebState extends State<DashboardWeb> {
             },
           ),
           const Spacer(),
+
+          // 🚀 NEW: Export Button nicely integrated into Top AppBar for Desktop
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _accentCyan.withOpacity(0.15),
+              foregroundColor: _accentCyan,
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: BorderSide(color: _accentCyan.withOpacity(0.5))
+              ),
+            ),
+            icon: const Icon(Icons.download, size: 18),
+            label: Text(
+              _isFrench ? 'EXPORTER' : 'EXPORT',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            onPressed: _navigateToExport,
+          ),
+          const SizedBox(width: 16),
 
           _buildLanguageToggle(),
           const SizedBox(width: 32),
@@ -785,7 +839,16 @@ class _DashboardWebState extends State<DashboardWeb> {
               ),
 
             ListTile(leading: Icon(Icons.dashboard, color: _accentCyan), title: Text(_isFrench ? 'Tableau de bord' : 'Dashboard', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold))),
-            ListTile(leading: const Icon(Icons.download, color: Colors.white54), title: Text(_isFrench ? 'Exporter Rapports' : 'Export Reports', style: const TextStyle(color: Colors.white54))),
+
+            // 🚀 NEW: Hooked up the sidebar button to launch the Export Screen!
+            ListTile(
+              leading: const Icon(Icons.download, color: Colors.white),
+              title: Text(_isFrench ? 'Exporter Rapports' : 'Export Reports', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              onTap: () {
+                if (isMobile) Navigator.pop(context); // Close the drawer first if on mobile
+                _navigateToExport();
+              },
+            ),
 
             const Spacer(),
             ListTile(
