@@ -411,12 +411,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 Navigator.pop(context);
                                 _pickFolderAndLoadData();
                               },
-                              // 🚀 NEW: Pass the sync function to the Developer page!
+                              // 🚀 Pass the sync function to the Developer page!
                               onForceSync: () {
                                 if (_rawData.isNotEmpty) {
                                   _performFirebaseSync();
                                 }
                               },
+                              // 🚀 THE FIX: Pass the exact folder variable used in your dashboard!
+                              currentFolderPath: _selectedFolderPath,
                             )
                         )
                     );

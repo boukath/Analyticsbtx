@@ -7,17 +7,20 @@ import 'cloud_sync_screen.dart';
 import 'create_user_screen.dart';
 import 'manage_users_screen.dart';
 import 'store_profile_screen.dart';
+import '../services/firebase_sync_service.dart'; // To call your history sync function
 
 class DeveloperScreen extends StatelessWidget {
   final bool isFrench;
   final VoidCallback onSelectDataSource;
-  final VoidCallback onForceSync; // 🚀 NEW: Accept the sync function from the Dashboard
+  final VoidCallback onForceSync;
+  final String? currentFolderPath; // 🚀 NEW: Accept the folder path directly from the Dashboard!
 
   const DeveloperScreen({
     Key? key,
     required this.isFrench,
     required this.onSelectDataSource,
-    required this.onForceSync, // 🚀 NEW
+    required this.onForceSync,
+    this.currentFolderPath, // 🚀 NEW
   }) : super(key: key);
 
   final Color _bgDark = const Color(0xFF0F172A);
@@ -63,7 +66,7 @@ class DeveloperScreen extends StatelessWidget {
                 mainAxisSpacing: 24,
                 childAspectRatio: 3.0,
                 children: [
-                  // 🚀 NEW CARD: Create User
+                  // 🚀 CARD: Create User
                   _buildDevCard(
                     context,
                     title: isFrench ? 'Créer un utilisateur' : 'Create User',
@@ -73,7 +76,7 @@ class DeveloperScreen extends StatelessWidget {
                     onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => CreateUserScreen(isFrench: isFrench))),
                   ),
 
-                  // 🚀 NEW CARD: Manage Users
+                  // 🚀 CARD: Manage Users
                   _buildDevCard(
                     context,
                     title: isFrench ? 'Gérer les utilisateurs' : 'Manage Users',
@@ -83,7 +86,7 @@ class DeveloperScreen extends StatelessWidget {
                     onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => ManageUsersScreen(isFrench: isFrench))),
                   ),
 
-                  // 🚀 NEW CARD: Store Profile
+                  // 🚀 CARD: Store Profile
                   _buildDevCard(
                     context,
                     title: isFrench ? 'Profil du Magasin' : 'Store Profile',
@@ -93,7 +96,7 @@ class DeveloperScreen extends StatelessWidget {
                     onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => StoreProfileScreen(isFrench: isFrench))),
                   ),
 
-                  // (Your existing cards follow below...)
+                  // CARD: Data Source
                   _buildDevCard(
                     context,
                     title: isFrench ? 'Source de données' : 'Data Source',
@@ -102,6 +105,8 @@ class DeveloperScreen extends StatelessWidget {
                     color: Colors.amberAccent,
                     onTap: onSelectDataSource,
                   ),
+
+                  // CARD: Camera Setup
                   _buildDevCard(
                     context,
                     title: isFrench ? 'Config. Caméras' : 'Camera Setup',
@@ -110,6 +115,8 @@ class DeveloperScreen extends StatelessWidget {
                     color: Colors.blueAccent,
                     onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const CameraFtpSetupScreen())),
                   ),
+
+                  // CARD: FTP Server
                   _buildDevCard(
                     context,
                     title: isFrench ? 'Serveur FTP' : 'FTP Server',
@@ -118,20 +125,62 @@ class DeveloperScreen extends StatelessWidget {
                     color: Colors.greenAccent,
                     onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const FtpServerScreen())),
                   ),
-                  // 🚀 FIXED: Call the passed function instead of the missing method
+
+                  // 🚀 FIXED CARD: Force Cloud Sync
                   _buildDevCard(
                     context,
                     title: isFrench ? 'Sync Firestore' : 'Force Cloud Sync',
-                    subtitle: isFrench ? 'Envoyer vers Firebase Database' : 'Push data to Firebase Database',
+                    subtitle: isFrench ? 'Envoyer l\'historique complet' : 'Push full history to Firebase',
                     icon: Icons.sync_problem,
                     color: Colors.orangeAccent,
-                    onTap: () {
+                    onTap: () async {
+                      // 1. Show starting message
                       ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(isFrench ? "Synchronisation Firestore en cours..." : "Starting Firestore sync..."), backgroundColor: Colors.orangeAccent),
+                        SnackBar(
+                            content: Text(isFrench ? "Lecture de l'historique en cours..." : "Reading folder history..."),
+                            backgroundColor: Colors.orangeAccent
+                        ),
                       );
-                      onForceSync();
+
+                      try {
+                        // 2. 🚀 USE THE PASSED FOLDER PATH DIRECTLY
+                        if (currentFolderPath != null && currentFolderPath!.isNotEmpty) {
+                          // 3. Trigger your full history sync method
+                          await FirebaseSyncService.syncFullFolderHistory(currentFolderPath!);
+
+                          // 4. Also trigger the standard sync just in case the UI needs to update
+                          onForceSync();
+
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                  content: Text(isFrench ? "Synchronisation terminée avec succès!" : "Historical sync complete!"),
+                                  backgroundColor: Colors.green
+                              ),
+                            );
+                          }
+                        } else {
+                          // Triggered if the string is null or empty
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                  content: Text(isFrench ? "Erreur: Aucun dossier source sélectionné." : "Error: No source folder selected."),
+                                  backgroundColor: Colors.redAccent
+                              ),
+                            );
+                          }
+                        }
+                      } catch (e) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
+                          );
+                        }
+                      }
                     },
                   ),
+
+                  // CARD: Cloud Sync (B2)
                   _buildDevCard(
                     context,
                     title: isFrench ? 'Synchronisation Cloud' : 'Cloud Sync (B2)',
