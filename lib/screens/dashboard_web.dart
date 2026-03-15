@@ -336,18 +336,36 @@ class _DashboardWebState extends State<DashboardWeb> {
   String _getFormattedDateString() {
     if (_selectedDateRange == null) return _isFrench ? "De tout temps" : "All Time";
 
-    List<String> monthsEn = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    List<String> monthsFr = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc'];
+    // Full names for single days
+    List<String> daysEn = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    List<String> daysFr = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
+    List<String> monthsEn = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    List<String> monthsFr = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
+
+    // Short names for date ranges
+    List<String> shortDaysEn = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    List<String> shortDaysFr = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+    List<String> shortMonthsEn = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    List<String> shortMonthsFr = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc'];
+
+    List<String> days = _isFrench ? daysFr : daysEn;
     List<String> months = _isFrench ? monthsFr : monthsEn;
+    List<String> shortDays = _isFrench ? shortDaysFr : shortDaysEn;
+    List<String> shortMonths = _isFrench ? shortMonthsFr : shortMonthsEn;
 
     DateTime start = _selectedDateRange!.start, end = _selectedDateRange!.end;
 
+    // If it's a single day, show the full day of the week and full month name
     if (start.isAtSameMomentAs(end) || end.difference(start).inDays == 0) {
       return _isFrench
-          ? "${start.day} ${months[start.month - 1]} ${start.year}"
-          : "${months[start.month - 1]} ${start.day}, ${start.year}";
+          ? "${days[start.weekday - 1]}, ${start.day} ${months[start.month - 1]} ${start.year}"
+          : "${days[start.weekday - 1]}, ${months[start.month - 1]} ${start.day}, ${start.year}";
     }
-    return "${months[start.month - 1]} ${start.day} - ${months[end.month - 1]} ${end.day}";
+
+    // For a range of days, use the shorter format to save space
+    return _isFrench
+        ? "${shortDays[start.weekday - 1]} ${start.day} ${shortMonths[start.month - 1]} - ${shortDays[end.weekday - 1]} ${end.day} ${shortMonths[end.month - 1]}"
+        : "${shortDays[start.weekday - 1]}, ${shortMonths[start.month - 1]} ${start.day} - ${shortDays[end.weekday - 1]}, ${shortMonths[end.month - 1]} ${end.day}";
   }
 
   void _showStoreSelectorDialog() {
@@ -456,6 +474,28 @@ class _DashboardWebState extends State<DashboardWeb> {
     );
   }
 
+  // 🚀 RESPONSIVE: Simplified AppBar just for mobile
+  PreferredSizeWidget _buildMobileAppBar() {
+    return AppBar(
+      backgroundColor: _bgDark,
+      elevation: 0,
+      iconTheme: const IconThemeData(color: Colors.white),
+      title: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(_storeName, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+          Text(_storeLocation.toUpperCase(), style: const TextStyle(color: Colors.white38, fontSize: 10, fontWeight: FontWeight.bold)),
+        ],
+      ),
+      actions: [
+        Padding(
+          padding: const EdgeInsets.only(right: 8.0),
+          child: _buildLanguageToggle(),
+        ),
+      ],
+    );
+  }
+
   Widget _buildTopAppBar() {
     return Container(
       height: 90,
@@ -534,7 +574,8 @@ class _DashboardWebState extends State<DashboardWeb> {
     );
   }
 
-  Widget _buildHeroChart() {
+  // 🚀 RESPONSIVE: Pass isMobile to handle fonts and padding
+  Widget _buildHeroChart(bool isMobile) {
     int totalVisitors = (_totalIn + _totalOut) ~/ 2;
     List<LineChartBarData> chartLines = [];
     double maxTrafficY = 1.0;
@@ -554,26 +595,30 @@ class _DashboardWebState extends State<DashboardWeb> {
     ));
 
     return Container(
-      padding: const EdgeInsets.all(40),
+      padding: EdgeInsets.all(isMobile ? 24 : 40),
       decoration: BoxDecoration(
-        color: _cardDark, borderRadius: BorderRadius.circular(32), border: Border.all(color: Colors.white.withOpacity(0.08), width: 1.5),
+        color: _cardDark, borderRadius: BorderRadius.circular(isMobile ? 20 : 32), border: Border.all(color: Colors.white.withOpacity(0.08), width: 1.5),
         boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.4), blurRadius: 40, offset: const Offset(0, 20))],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          // 🚀 RESPONSIVE: Wrap instead of Row to prevent overflow on small phones
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.end,
+            spacing: 16,
+            runSpacing: 16,
             children: [
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(_isFrench ? 'TRAFIC GLOBAL' : 'GLOBAL TRAFFIC', style: const TextStyle(color: Colors.white54, fontSize: 13, fontWeight: FontWeight.w800, letterSpacing: 3.0)),
-                  Text(totalVisitors.toString(), style: const TextStyle(color: Colors.white, fontSize: 72, fontWeight: FontWeight.w900, letterSpacing: -3, height: 1.0)),
+                  Text(totalVisitors.toString(), style: TextStyle(color: Colors.white, fontSize: isMobile ? 48 : 72, fontWeight: FontWeight.w900, letterSpacing: -2, height: 1.0)),
                 ],
               ),
               Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text('${_isFrench ? "Total Entrées" : "Total In"}: $_totalIn', style: const TextStyle(color: Color(0xFF00C6FF), fontSize: 15, fontWeight: FontWeight.w900)),
                   const SizedBox(height: 8),
@@ -582,9 +627,9 @@ class _DashboardWebState extends State<DashboardWeb> {
               )
             ],
           ),
-          const SizedBox(height: 50),
+          SizedBox(height: isMobile ? 30 : 50),
           SizedBox(
-            height: 380,
+            height: isMobile ? 250 : 380,
             child: LineChart(
               LineChartData(
                 minY: 0, maxY: maxTrafficY * 1.15,
@@ -592,7 +637,7 @@ class _DashboardWebState extends State<DashboardWeb> {
                 titlesData: FlTitlesData(
                   rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
                   topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                  leftTitles: AxisTitles(sideTitles: SideTitles(showTitles: true, reservedSize: 50, getTitlesWidget: (value, meta) => Text(value.toInt().toString(), style: const TextStyle(color: Colors.white38, fontSize: 12)))),
+                  leftTitles: AxisTitles(sideTitles: SideTitles(showTitles: true, reservedSize: isMobile ? 35 : 50, getTitlesWidget: (value, meta) => Text(value.toInt().toString(), style: const TextStyle(color: Colors.white38, fontSize: 12)))),
 
                   // 🚀 FIXED: Dynamic X-Axis labels! Shows Dates for multi-day views, Hours for single-day views.
                   bottomTitles: AxisTitles(sideTitles: SideTitles(showTitles: true, reservedSize: 40, getTitlesWidget: (value, meta) {
@@ -620,26 +665,42 @@ class _DashboardWebState extends State<DashboardWeb> {
     );
   }
 
-  Widget _buildBentoGrid() {
+  // 🚀 RESPONSIVE: Switch between Column and Row
+  Widget _buildBentoGrid(bool isMobile) {
     int totalVisitors = (_totalIn + _totalOut) ~/ 2;
     double conversionRate = totalVisitors > 0 ? (_currentClients / totalVisitors) * 100 : 0.0;
     double avgBasket = _currentClients > 0 ? (_currentCa / _currentClients) : 0.0;
     double upt = _currentClients > 0 ? (_currentArticles / _currentClients) : 0.0;
 
-    return Row(
-      children: [
-        Expanded(flex: 2, child: _buildBentoCard(title: _isFrench ? "CHIFFRE D'AFFAIRES" : 'REVENUE', value: _currentCa.toStringAsFixed(0), unit: 'DZD', icon: Icons.account_balance_wallet_rounded, color: const Color(0xFF38EF7D))), const SizedBox(width: 24),
-        Expanded(flex: 1, child: _buildBentoCard(title: _isFrench ? 'TAUX DE CONV.' : 'CONV. RATE', value: conversionRate.toStringAsFixed(1), unit: '%', icon: Icons.track_changes_rounded, color: const Color(0xFFFF512F))), const SizedBox(width: 24),
-        Expanded(flex: 1, child: _buildBentoCard(title: _isFrench ? 'PANIER MOYEN' : 'AVG BASKET', value: avgBasket.toStringAsFixed(0), unit: 'DZD', icon: Icons.shopping_bag_rounded, color: const Color(0xFF00C6FF))), const SizedBox(width: 24),
-        Expanded(flex: 1, child: _buildBentoCard(title: _isFrench ? 'INDICE DE VENTE' : 'U.P.T', value: upt.toStringAsFixed(2), unit: 'ART', icon: Icons.layers_rounded, color: const Color(0xFF8E2DE2))),
-      ],
-    );
+    List<Widget> cards = [
+      _buildBentoCard(title: _isFrench ? "CHIFFRE D'AFFAIRES" : 'REVENUE', value: _currentCa.toStringAsFixed(0), unit: 'DZD', icon: Icons.account_balance_wallet_rounded, color: const Color(0xFF38EF7D), isMobile: isMobile),
+      _buildBentoCard(title: _isFrench ? 'TAUX DE CONV.' : 'CONV. RATE', value: conversionRate.toStringAsFixed(1), unit: '%', icon: Icons.track_changes_rounded, color: const Color(0xFFFF512F), isMobile: isMobile),
+      _buildBentoCard(title: _isFrench ? 'PANIER MOYEN' : 'AVG BASKET', value: avgBasket.toStringAsFixed(0), unit: 'DZD', icon: Icons.shopping_bag_rounded, color: const Color(0xFF00C6FF), isMobile: isMobile),
+      _buildBentoCard(title: _isFrench ? 'INDICE DE VENTE' : 'U.P.T', value: upt.toStringAsFixed(2), unit: 'ART', icon: Icons.layers_rounded, color: const Color(0xFF8E2DE2), isMobile: isMobile),
+    ];
+
+    if (isMobile) {
+      return Column(
+        children: cards.map((c) => Padding(padding: const EdgeInsets.only(bottom: 16), child: c)).toList(),
+      );
+    } else {
+      return Row(
+        children: [
+          Expanded(flex: 2, child: cards[0]), const SizedBox(width: 24),
+          Expanded(flex: 1, child: cards[1]), const SizedBox(width: 24),
+          Expanded(flex: 1, child: cards[2]), const SizedBox(width: 24),
+          Expanded(flex: 1, child: cards[3]),
+        ],
+      );
+    }
   }
 
-  Widget _buildBentoCard({required String title, required String value, required String unit, required IconData icon, required Color color}) {
+  Widget _buildBentoCard({required String title, required String value, required String unit, required IconData icon, required Color color, required bool isMobile}) {
     return Container(
-      height: 220, padding: const EdgeInsets.all(28),
-      decoration: BoxDecoration(color: _cardDark, borderRadius: BorderRadius.circular(32), border: Border.all(color: Colors.white.withOpacity(0.06), width: 1.5)),
+      height: isMobile ? 180 : 220,
+      padding: EdgeInsets.all(isMobile ? 20 : 28),
+      width: isMobile ? double.infinity : null, // Stretch full width on mobile
+      decoration: BoxDecoration(color: _cardDark, borderRadius: BorderRadius.circular(isMobile ? 20 : 32), border: Border.all(color: Colors.white.withOpacity(0.06), width: 1.5)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
@@ -650,7 +711,11 @@ class _DashboardWebState extends State<DashboardWeb> {
               Text(title, style: const TextStyle(fontSize: 12, color: Colors.white54, fontWeight: FontWeight.w800, letterSpacing: 2.0)),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic,
-                children: [Text(value, style: const TextStyle(fontSize: 42, fontWeight: FontWeight.w900, color: Colors.white)), const SizedBox(width: 6), Text(unit, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: color))],
+                children: [
+                  Text(value, style: TextStyle(fontSize: isMobile ? 32 : 42, fontWeight: FontWeight.w900, color: Colors.white)),
+                  const SizedBox(width: 6),
+                  Text(unit, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: color))
+                ],
               ),
             ],
           ),
@@ -659,123 +724,190 @@ class _DashboardWebState extends State<DashboardWeb> {
     );
   }
 
-  Widget _buildSidebar() {
+  // 🚀 RESPONSIVE: Added isMobile flag to hide width constraints when in a Drawer
+  Widget _buildSidebar({bool isMobile = false}) {
     return Container(
-      width: 260, color: _cardDark,
+      width: isMobile ? null : 260,
+      color: _cardDark,
+      child: SafeArea(
+        child: Column(
+          children: [
+            const SizedBox(height: 40),
+
+            // 🚀 NEW: Replaced the Cloud icon with your large logo
+            Image.asset(
+              'assets/boitex_logo.png',
+              width: 180, // Made it nice and big! Adjust if needed.
+              height: 100, // Provides plenty of space
+              fit: BoxFit.contain, // Ensures the logo doesn't get stretched or cropped
+            ),
+
+            const SizedBox(height: 16),
+            const Text('BoitexInfo', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w900, color: Colors.white)),
+            Text(_isFrench ? 'TABLEAU DE BORD CLOUD' : 'CLOUD DASHBOARD', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: _accentCyan, letterSpacing: 2.0)),
+            const SizedBox(height: 40),
+
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 16),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                  color: _bgDark,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.white.withOpacity(0.05))
+              ),
+              child: Row(
+                children: [
+                  CircleAvatar(backgroundColor: _accentCyan.withOpacity(0.2), child: Icon(Icons.person, color: _accentCyan, size: 20)),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(_loggedInUserName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis),
+                        Text(_loggedInRole.toUpperCase(), style: const TextStyle(color: Colors.white54, fontSize: 10, letterSpacing: 1.0)),
+                      ],
+                    ),
+                  )
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            // Add Store selector explicitly to Sidebar on Mobile (Since Top AppBar is small)
+            if (isMobile && _userStores.isNotEmpty)
+              ListTile(
+                leading: Icon(Icons.store, color: _accentCyan),
+                title: Text(_isFrench ? 'Changer de Magasin' : 'Switch Store', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                onTap: () {
+                  Navigator.pop(context); // Close Drawer
+                  _showStoreSelectorDialog();
+                },
+              ),
+
+            ListTile(leading: Icon(Icons.dashboard, color: _accentCyan), title: Text(_isFrench ? 'Tableau de bord' : 'Dashboard', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold))),
+            ListTile(leading: const Icon(Icons.download, color: Colors.white54), title: Text(_isFrench ? 'Exporter Rapports' : 'Export Reports', style: const TextStyle(color: Colors.white54))),
+
+            const Spacer(),
+            ListTile(
+              leading: const Icon(Icons.logout, color: Colors.redAccent),
+              title: Text(_isFrench ? 'Déconnexion' : 'Sign Out', style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+              onTap: _signOut,
+            ),
+            const SizedBox(height: 20),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // 🚀 RESPONSIVE: Main Content extracted out to handle both Desktop/Mobile Views efficiently
+  Widget _buildMainContent(bool isMobile, double padding) {
+    if (_isLoading) return Center(child: CircularProgressIndicator(color: _accentCyan));
+
+    return SingleChildScrollView(
+      padding: EdgeInsets.all(padding),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SizedBox(height: 40),
-          Icon(Icons.cloud, color: _accentCyan, size: 60),
-          const SizedBox(height: 16),
-          const Text('BoitexInfo', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w900, color: Colors.white)),
-          Text(_isFrench ? 'TABLEAU DE BORD CLOUD' : 'CLOUD DASHBOARD', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: _accentCyan, letterSpacing: 2.0)),
-          const SizedBox(height: 40),
-
-          Container(
-            margin: const EdgeInsets.symmetric(horizontal: 16),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-                color: _bgDark,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.white.withOpacity(0.05))
-            ),
-            child: Row(
-              children: [
-                CircleAvatar(backgroundColor: _accentCyan.withOpacity(0.2), child: Icon(Icons.person, color: _accentCyan, size: 20)),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(_loggedInUserName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13), overflow: TextOverflow.ellipsis),
-                      Text(_loggedInRole.toUpperCase(), style: const TextStyle(color: Colors.white54, fontSize: 10, letterSpacing: 1.0)),
-                    ],
-                  ),
-                )
-              ],
-            ),
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 16,
+            runSpacing: 16,
+            children: [
+              Text(_isFrench ? "Vue d'Ensemble" : 'Command Center', style: TextStyle(fontSize: isMobile ? 28 : 36, fontWeight: FontWeight.w900, color: Colors.white)),
+              Container(
+                decoration: BoxDecoration(color: _cardDark, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.white.withOpacity(0.1))),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min, // Ensures it shrinks well
+                  children: [
+                    IconButton(icon: const Icon(Icons.chevron_left, color: Colors.white54), onPressed: () => _shiftDate(-1)),
+                    GestureDetector(onTap: _pickDateRange, child: Padding(padding: const EdgeInsets.symmetric(horizontal: 16), child: Text(_getFormattedDateString(), style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)))),
+                    IconButton(icon: const Icon(Icons.chevron_right, color: Colors.white54), onPressed: () => _shiftDate(1)),
+                  ],
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 20),
 
-          ListTile(leading: Icon(Icons.dashboard, color: _accentCyan), title: Text(_isFrench ? 'Tableau de bord' : 'Dashboard', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold))),
-          ListTile(leading: const Icon(Icons.download, color: Colors.white54), title: Text(_isFrench ? 'Exporter Rapports' : 'Export Reports', style: const TextStyle(color: Colors.white54))),
+          // Show Camera Selector here on Mobile instead of App Bar
+          if (isMobile && _availableCameras.length > 1)
+            Container(
+              margin: const EdgeInsets.only(top: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(color: _cardDark, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.white.withOpacity(0.1))),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  isExpanded: true,
+                  value: _selectedCamera,
+                  dropdownColor: _cardDark,
+                  icon: Icon(Icons.videocam, color: _accentCyan, size: 20),
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                  items: _availableCameras.map((cam) => DropdownMenuItem(value: cam, child: Text(cam))).toList(),
+                  onChanged: (val) {
+                    if (val != null) {
+                      setState(() => _selectedCamera = val);
+                      _applyFilter();
+                    }
+                  },
+                ),
+              ),
+            ),
 
-          const Spacer(),
-          ListTile(
-            leading: const Icon(Icons.logout, color: Colors.redAccent),
-            title: Text(_isFrench ? 'Déconnexion' : 'Sign Out', style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
-            onTap: _signOut,
-          ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 32),
+
+          if (_rawData.isEmpty)
+            Center(child: Padding(padding: const EdgeInsets.all(80.0), child: Text(_isFrench ? "Aucune donnée trouvée pour ce magasin à cette date." : "No data found for this store on this date.", style: const TextStyle(color: Colors.white54, fontSize: 18), textAlign: TextAlign.center)))
+          else ...[
+            _buildHeroChart(isMobile),
+            const SizedBox(height: 32),
+
+            Container(
+              width: double.infinity, padding: EdgeInsets.all(isMobile ? 20 : 32),
+              decoration: BoxDecoration(color: _cardDark, borderRadius: BorderRadius.circular(isMobile ? 20 : 24), border: Border.all(color: Colors.white.withOpacity(0.1))),
+              child: Column(
+                children: [
+                  const Icon(Icons.videocam_off, color: Colors.white24, size: 48),
+                  const SizedBox(height: 16),
+                  Text(_isFrench ? 'Flux en direct indisponible à distance' : 'Live Feed Unavailable Remotely', textAlign: TextAlign.center, style: TextStyle(color: Colors.white, fontSize: isMobile ? 16 : 18, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  Text(_isFrench ? 'Pour des raisons de sécurité, les flux des caméras ne peuvent être consultés que sur le PC local du magasin.' : 'For security reasons, live camera streams can only be viewed on the local store PC.', textAlign: TextAlign.center, style: const TextStyle(color: Colors.white54)),
+                ],
+              ),
+            ),
+            const SizedBox(height: 32),
+
+            _buildBentoGrid(isMobile),
+          ]
         ],
       ),
     );
   }
 
+  // 🚀 THE MAGIC: The build method now watches screen size!
   @override
   Widget build(BuildContext context) {
+    // Check if screen is less than 900px wide
+    bool isMobile = MediaQuery.of(context).size.width < 900;
+    double padding = isMobile ? 16.0 : 32.0;
+
     return Scaffold(
       backgroundColor: _bgDark,
-      body: Row(
+      // Create a slide-out hamburger menu drawer for the sidebar if on mobile
+      drawer: isMobile ? Drawer(child: _buildSidebar(isMobile: true)) : null,
+      appBar: isMobile ? _buildMobileAppBar() : null,
+      body: isMobile
+      // If Mobile: Just show content (Sidebar is in Drawer now)
+          ? _buildMainContent(isMobile, padding)
+      // If Desktop: Show Sidebar row alongside Main Content
+          : Row(
         children: [
-          _buildSidebar(),
+          _buildSidebar(isMobile: false),
           Expanded(
             child: Column(
               children: [
                 _buildTopAppBar(),
-                Expanded(
-                  child: _isLoading
-                      ? Center(child: CircularProgressIndicator(color: _accentCyan))
-                      : SingleChildScrollView(
-                    padding: const EdgeInsets.all(32.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(_isFrench ? "Vue d'Ensemble" : 'Command Center', style: const TextStyle(fontSize: 36, fontWeight: FontWeight.w900, color: Colors.white)),
-                            Container(
-                              decoration: BoxDecoration(color: _cardDark, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.white.withOpacity(0.1))),
-                              child: Row(
-                                children: [
-                                  IconButton(icon: const Icon(Icons.chevron_left, color: Colors.white54), onPressed: () => _shiftDate(-1)),
-                                  GestureDetector(onTap: _pickDateRange, child: Padding(padding: const EdgeInsets.symmetric(horizontal: 16), child: Text(_getFormattedDateString(), style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)))),
-                                  IconButton(icon: const Icon(Icons.chevron_right, color: Colors.white54), onPressed: () => _shiftDate(1)),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 32),
-
-                        if (_rawData.isEmpty)
-                          Center(child: Padding(padding: const EdgeInsets.all(80.0), child: Text(_isFrench ? "Aucune donnée trouvée pour ce magasin à cette date." : "No data found for this store on this date.", style: const TextStyle(color: Colors.white54, fontSize: 18))))
-                        else ...[
-                          _buildHeroChart(),
-                          const SizedBox(height: 32),
-
-                          Container(
-                            width: double.infinity, padding: const EdgeInsets.all(32),
-                            decoration: BoxDecoration(color: _cardDark, borderRadius: BorderRadius.circular(24), border: Border.all(color: Colors.white.withOpacity(0.1))),
-                            child: Column(
-                              children: [
-                                const Icon(Icons.videocam_off, color: Colors.white24, size: 48),
-                                const SizedBox(height: 16),
-                                Text(_isFrench ? 'Flux en direct indisponible à distance' : 'Live Feed Unavailable Remotely', style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-                                const SizedBox(height: 8),
-                                Text(_isFrench ? 'Pour des raisons de sécurité, les flux des caméras ne peuvent être consultés que sur le PC local du magasin.' : 'For security reasons, live camera streams can only be viewed on the local store PC.', style: const TextStyle(color: Colors.white54)),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 32),
-
-                          _buildBentoGrid(),
-                        ]
-                      ],
-                    ),
-                  ),
-                ),
+                Expanded(child: _buildMainContent(isMobile, padding)),
               ],
             ),
           ),
