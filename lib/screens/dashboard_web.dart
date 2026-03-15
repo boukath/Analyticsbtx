@@ -193,7 +193,6 @@ class _DashboardWebState extends State<DashboardWeb> {
         if (doc.exists && doc.data() != null) {
           Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
 
-          // 🚀 PARSE NEW MULTI-CAMERA STRUCTURE
           if (data.containsKey('cameras')) {
             Map<String, dynamic> cameras = data['cameras'];
             cameras.forEach((cameraName, hourly) {
@@ -202,7 +201,7 @@ class _DashboardWebState extends State<DashboardWeb> {
                   loadedData.add(PeopleCount(
                     date: "${d.day.toString().padLeft(2,'0')}/${d.month.toString().padLeft(2,'0')}/${d.year}",
                     time: time,
-                    doorName: cameraName, // Extract specific camera name!
+                    doorName: cameraName,
                     inCount: counts['in'] ?? 0,
                     outCount: counts['out'] ?? 0,
                     shopId: _selectedStoreId,
@@ -211,7 +210,6 @@ class _DashboardWebState extends State<DashboardWeb> {
               }
             });
           }
-          // 🚀 BACKWARDS COMPATIBILITY FOR OLD DATA
           else if (data.containsKey('hourly_data')) {
             Map<String, dynamic> hourly = data['hourly_data'];
             hourly.forEach((time, counts) {
@@ -226,10 +224,11 @@ class _DashboardWebState extends State<DashboardWeb> {
             });
           }
 
+          // 🚀 FIXED: Safely cast Firebase numbers to avoid `as int` crashes!
           if (data.containsKey('pos')) {
-            _currentCa += (data['pos']['ca'] ?? 0).toDouble();
-            _currentClients += (data['pos']['clients'] ?? 0) as int;
-            _currentArticles += (data['pos']['articles'] ?? 0) as int;
+            _currentCa += ((data['pos']['ca'] ?? 0) as num).toDouble();
+            _currentClients += ((data['pos']['clients'] ?? 0) as num).toInt();
+            _currentArticles += ((data['pos']['articles'] ?? 0) as num).toInt();
           }
         }
       }
@@ -248,24 +247,26 @@ class _DashboardWebState extends State<DashboardWeb> {
 
   void _applyFilter() {
     setState(() {
-      // 1. Build dynamic camera list based on available data
+      // 🚀 FIXED: Auto-switch between Hourly and Daily views depending on selected dates
+      if (_selectedDateRange != null && _selectedDateRange!.end.difference(_selectedDateRange!.start).inDays > 0) {
+        _currentFilter = ChartFilter.daily;
+      } else {
+        _currentFilter = ChartFilter.hourly;
+      }
+
       Set<String> cams = {'All Doors'};
       for (var item in _rawData) {
-        // Only add individual cameras to the dropdown, don't duplicate "All Doors"
         if (item.doorName != 'All Doors') {
           cams.add(item.doorName);
         }
       }
-      _availableCameras = cams.toList()..sort(); // Sorting makes it look cleaner!
+      _availableCameras = cams.toList()..sort();
 
-      // Reset if selected camera doesn't exist in new date range
       if (!_availableCameras.contains(_selectedCamera)) {
         _selectedCamera = 'All Doors';
       }
 
-      // 2. Filter data by working hours AND the selected camera
       List<PeopleCount> filteredData = _rawData.where((item) {
-        // 🚀 FIXED: Only filter by camera if a specific camera is chosen!
         if (_selectedCamera != 'All Doors' && item.doorName != _selectedCamera) {
           return false;
         }
@@ -299,10 +300,6 @@ class _DashboardWebState extends State<DashboardWeb> {
       }
     });
   }
-
-  // ===========================================================================
-  // 🚀 UI BUILDERS
-  // ===========================================================================
 
   void _shiftDate(int days) {
     setState(() {
@@ -483,7 +480,6 @@ class _DashboardWebState extends State<DashboardWeb> {
           if (_userStores.isNotEmpty)
             Row(
               children: [
-                // 🚀 CAMERA SELECTOR DROPDOWN
                 if (_availableCameras.length > 1)
                   Container(
                     margin: const EdgeInsets.only(right: 16),
@@ -506,7 +502,6 @@ class _DashboardWebState extends State<DashboardWeb> {
                     ),
                   ),
 
-                // STORE SELECTOR
                 InkWell(
                   onTap: _showStoreSelectorDialog,
                   borderRadius: BorderRadius.circular(8),
@@ -598,10 +593,20 @@ class _DashboardWebState extends State<DashboardWeb> {
                   rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
                   topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
                   leftTitles: AxisTitles(sideTitles: SideTitles(showTitles: true, reservedSize: 50, getTitlesWidget: (value, meta) => Text(value.toInt().toString(), style: const TextStyle(color: Colors.white38, fontSize: 12)))),
+
+                  // 🚀 FIXED: Dynamic X-Axis labels! Shows Dates for multi-day views, Hours for single-day views.
                   bottomTitles: AxisTitles(sideTitles: SideTitles(showTitles: true, reservedSize: 40, getTitlesWidget: (value, meta) {
                     int index = value.toInt();
                     if (index >= 0 && index < _displayedData.length) {
-                      return Padding(padding: const EdgeInsets.only(top: 12.0), child: Text(_displayedData[index].time.split(':')[0], style: const TextStyle(color: Colors.white54, fontSize: 11)));
+                      var item = _displayedData[index];
+                      String label = _currentFilter == ChartFilter.daily
+                          ? item.date.substring(0, 5) // Display "DD/MM"
+                          : item.time.split(':')[0];  // Display "14", "15", etc.
+
+                      return Padding(
+                          padding: const EdgeInsets.only(top: 12.0),
+                          child: Text(label, style: const TextStyle(color: Colors.white54, fontSize: 11))
+                      );
                     }
                     return const SizedBox.shrink();
                   })),

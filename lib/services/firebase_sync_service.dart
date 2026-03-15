@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/people_count.dart';
 import '../core/data_aggregator.dart'; // 🚀 Add this import
+import 'folder_scanner_service.dart'; // 🚀 NEW: Import your folder scanner!
 
 class FirebaseSyncService {
   static Timer? _scheduleTimer;
@@ -44,10 +45,67 @@ class FirebaseSyncService {
     });
   }
 
-  // 🚀 CHANGED: Accepts perDoorData instead of hourlyData
+  // 🚀 NEW HELPER: Formats SCB Date "DD/MM/YY" into Firebase Document Date "YYYY-MM-DD"
+  static String _formatDateToIso(String dateStr) {
+    try {
+      var parts = dateStr.split('/');
+      if (parts.length == 3) {
+        int day = int.parse(parts[0]);
+        int month = int.parse(parts[1]);
+        int year = int.parse(parts[2]);
+        if (year < 100) year += 2000;
+        return "$year-${month.toString().padLeft(2, '0')}-${day.toString().padLeft(2, '0')}";
+      }
+      DateTime parsed = DateTime.parse(dateStr);
+      return "${parsed.year}-${parsed.month.toString().padLeft(2, '0')}-${parsed.day.toString().padLeft(2, '0')}";
+    } catch (e) {
+      final now = DateTime.now();
+      return "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
+    }
+  }
+
+  // =======================================================================
+  // 🚀 NEW: THE FULL HISTORY SYNC FIX
+  // This bypasses the UI and reads your whole 'comptage' folder directly!
+  // =======================================================================
+  static Future<void> syncFullFolderHistory(String folderPath) async {
+    try {
+      debugPrint("📁 Scanning entire folder for historical data: $folderPath");
+
+      // 1. Read every single .scb file in the folder (and subfolders)
+      FolderScannerService scanner = FolderScannerService();
+      List<PeopleCount> allHistoricalData = await scanner.loadScbDataFromFolder(folderPath);
+
+      if (allHistoricalData.isEmpty) {
+        debugPrint("⚠️ No data found in the folder.");
+        return;
+      }
+
+      // 2. Group the massive list of raw data by camera (doorName)
+      Map<String, List<PeopleCount>> allDataPerDoor = {};
+      for (var data in allHistoricalData) {
+        allDataPerDoor.putIfAbsent(data.doorName, () => []);
+        allDataPerDoor[data.doorName]!.add(data);
+      }
+
+      // 3. Pass ALL the data into our perfected upload logic!
+      await uploadDailySummary(
+        perDoorData: allDataPerDoor,
+        totalIn: 0,  // The logic inside dynamically recalculates this anyway!
+        totalOut: 0,
+        posDataForToday: null, // POS data isn't needed for older historical days
+      );
+
+      debugPrint("✅ Full historical folder sync complete!");
+    } catch (e) {
+      debugPrint("❌ Failed to sync folder history: $e");
+    }
+  }
+
+  // 🚀 FIXED: Now extracts the actual date from the data to support historical uploads!
   static Future<void> uploadDailySummary({
     required Map<String, List<PeopleCount>> perDoorData,
-    required int totalIn,
+    required int totalIn,   // Kept to avoid breaking changes in other files calling this
     required int totalOut,
     required Map<String, dynamic>? posDataForToday,
   }) async {
@@ -57,7 +115,6 @@ class FirebaseSyncService {
       // Sanitizing the client ID to prevent capitalization or space errors
       String rawClientId = prefs.getString('firebase_client_id') ?? '';
       String clientId = rawClientId.trim().replaceAll(' ', '_').toLowerCase();
-
       String brandName = prefs.getString('store_name') ?? 'Unknown Brand';
       String locationName = prefs.getString('store_location') ?? 'Unknown Location';
 
@@ -66,10 +123,8 @@ class FirebaseSyncService {
       String specificStoreId = "${brandName}_$locationName".replaceAll(' ', '_').toLowerCase();
 
       // =======================================================================
-      // 🚀 THE FIX: Create the Parent Documents so they aren't "Ghosts"
+      // 🚀 CREATE PARENT DOCUMENTS
       // =======================================================================
-
-      // 1. Explicitly create/update the Client document
       await FirebaseFirestore.instance
           .collection('clients')
           .doc(clientId)
@@ -77,7 +132,6 @@ class FirebaseSyncService {
         'last_active': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
-      // 2. Explicitly create/update the Store document inside the client
       await FirebaseFirestore.instance
           .collection('clients').doc(clientId)
           .collection('stores').doc(specificStoreId)
@@ -88,65 +142,94 @@ class FirebaseSyncService {
       }, SetOptions(merge: true));
 
       // =======================================================================
-
-      final now = DateTime.now();
-      String dateKey = "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
+      // 🚀 PROCESS HISTORICAL DATA
+      // =======================================================================
       bool syncDetailedCameras = prefs.getBool('sync_individual_cameras') ?? false;
 
-      // 🚀 NEW: Format the hourly traffic data for EACH individual camera
-      Map<String, dynamic> camerasPayload = {};
+      // Map structure: payloadsByDate["2024-03-15"]["Camera Name"]["14:00"] = {'in': X, 'out': Y}
+      Map<String, Map<String, Map<String, dynamic>>> payloadsByDate = {};
+      Map<String, int> dailyTotalIn = {};
+      Map<String, int> dailyTotalOut = {};
 
       if (syncDetailedCameras) {
-        // 🔹 PREMIUM MODE: Upload every camera individually
+        // 🔹 INDIVIDUAL CAMERAS MODE
         perDoorData.forEach((doorName, counts) {
-          Map<String, dynamic> hourlyMap = {};
+          String niceCameraName = prefs.getString('camera_name_$doorName') ?? doorName.toUpperCase();
           var hourly = DataAggregator.aggregateByHour(counts);
+
           for (var item in hourly) {
-            hourlyMap[item.time] = {'in': item.inCount, 'out': item.outCount};
+            String docDate = _formatDateToIso(item.date); // Gets the exact historical date!
+
+            payloadsByDate.putIfAbsent(docDate, () => {});
+            payloadsByDate[docDate]!.putIfAbsent(niceCameraName, () => {});
+
+            payloadsByDate[docDate]![niceCameraName]![item.time] = {
+              'in': item.inCount,
+              'out': item.outCount
+            };
+
+            dailyTotalIn[docDate] = (dailyTotalIn[docDate] ?? 0) + item.inCount;
+            dailyTotalOut[docDate] = (dailyTotalOut[docDate] ?? 0) + item.outCount;
           }
-          camerasPayload[doorName] = hourlyMap;
         });
       } else {
-        // 🔹 STANDARD MODE: Merge everything to save Firebase space!
+        // 🔹 ALL DOORS MERGED MODE
         List<PeopleCount> allMergedData = [];
         perDoorData.forEach((doorName, counts) {
           allMergedData.addAll(counts);
         });
 
-        Map<String, dynamic> hourlyMap = {};
         var hourly = DataAggregator.aggregateByHour(allMergedData);
         for (var item in hourly) {
-          hourlyMap[item.time] = {'in': item.inCount, 'out': item.outCount};
+          String docDate = _formatDateToIso(item.date); // Gets the exact historical date!
+
+          payloadsByDate.putIfAbsent(docDate, () => {});
+          payloadsByDate[docDate]!.putIfAbsent('All Doors', () => {});
+
+          payloadsByDate[docDate]!['All Doors']![item.time] = {
+            'in': item.inCount,
+            'out': item.outCount
+          };
+
+          dailyTotalIn[docDate] = (dailyTotalIn[docDate] ?? 0) + item.inCount;
+          dailyTotalOut[docDate] = (dailyTotalOut[docDate] ?? 0) + item.outCount;
+        }
+      }
+
+      final now = DateTime.now();
+      String todayKey = "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
+
+      // =======================================================================
+      // 🚀 UPLOAD TO FIREBASE BY DATE
+      // =======================================================================
+      // Loop through all discovered dates and push them to their own document!
+      for (String dateDocKey in payloadsByDate.keys) {
+        Map<String, dynamic> payload = {
+          'date': dateDocKey,
+          'last_updated': FieldValue.serverTimestamp(),
+          'total_in': dailyTotalIn[dateDocKey] ?? 0, // Accurate total for this specific day
+          'total_out': dailyTotalOut[dateDocKey] ?? 0,
+          'cameras': payloadsByDate[dateDocKey],
+        };
+
+        // Only attach POS data if the document being written belongs to today
+        if (dateDocKey == todayKey && posDataForToday != null) {
+          payload['pos'] = {
+            'ca': posDataForToday['ca'] ?? 0,
+            'clients': posDataForToday['clients'] ?? 0,
+            'articles': posDataForToday['articles'] ?? 0,
+          };
         }
 
-        // Save it under a single generic key
-        camerasPayload['All Doors'] = hourlyMap;
+        // Push to Firebase under the correct Historical Date Document!
+        await FirebaseFirestore.instance
+            .collection('clients').doc(clientId)
+            .collection('stores').doc(specificStoreId)
+            .collection('daily_traffic').doc(dateDocKey)
+            .set(payload, SetOptions(merge: true));
       }
 
-      Map<String, dynamic> payload = {
-        'date': dateKey,
-        'last_updated': FieldValue.serverTimestamp(),
-        'total_in': totalIn,
-        'total_out': totalOut,
-        'cameras': camerasPayload, // Pushing the optimized map!
-      };
-
-      if (posDataForToday != null) {
-        payload['pos'] = {
-          'ca': posDataForToday['ca'] ?? 0,
-          'clients': posDataForToday['clients'] ?? 0,
-          'articles': posDataForToday['articles'] ?? 0,
-        };
-      }
-
-      // Finally, push the actual daily traffic data
-      await FirebaseFirestore.instance
-          .collection('clients').doc(clientId)
-          .collection('stores').doc(specificStoreId)
-          .collection('daily_traffic').doc(dateKey)
-          .set(payload, SetOptions(merge: true));
-
-      debugPrint("✅ FirebaseSyncService: Successfully synced multi-camera data!");
+      debugPrint("✅ FirebaseSyncService: Successfully synced historical data for ${payloadsByDate.length} days!");
     } catch (e) {
       debugPrint("❌ FirebaseSyncService: Failed to sync: $e");
     }
