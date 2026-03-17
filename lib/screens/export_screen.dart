@@ -17,6 +17,11 @@ class ExportScreen extends StatefulWidget {
   final int workingMinuteStart;
   final int workingMinuteEnd;
   final Map<String, Map<String, num>> posDatabase;
+  final String? storeName;
+  final String? storeLocation;
+
+  // 🚀 NEW: The callback to fetch more data from Firebase when dates change!
+  final Future<Map<String, dynamic>> Function(DateTimeRange)? onFetchWebData;
 
   const ExportScreen({
     Key? key,
@@ -26,6 +31,9 @@ class ExportScreen extends StatefulWidget {
     required this.workingMinuteStart,
     required this.workingMinuteEnd,
     required this.posDatabase,
+    this.storeName,
+    this.storeLocation,
+    this.onFetchWebData, // 🚀 NEW
   }) : super(key: key);
 
   @override
@@ -33,6 +41,11 @@ class ExportScreen extends StatefulWidget {
 }
 
 class _ExportScreenState extends State<ExportScreen> {
+  // 🚀 NEW: Local data storage so we can overwrite it when picking new dates
+  late List<PeopleCount> _localRawData;
+  late Map<String, Map<String, num>> _localPosDatabase;
+  bool _isFetching = false;
+
   // --- Export State ---
   late String _selectedCamera;
   late DateTimeRange _selectedDateRange;
@@ -46,6 +59,10 @@ class _ExportScreenState extends State<ExportScreen> {
   @override
   void initState() {
     super.initState();
+    // Load the initial data passed from the dashboard
+    _localRawData = List.from(widget.rawData);
+    _localPosDatabase = Map.from(widget.posDatabase);
+
     // Default to the first available camera (usually 'All Doors')
     _selectedCamera = widget.availableCameras.isNotEmpty ? widget.availableCameras.first : 'All Doors';
 
@@ -57,12 +74,38 @@ class _ExportScreenState extends State<ExportScreen> {
     );
   }
 
+  // 🚀 NEW: The core function that fetches data when the date changes
+  Future<void> _handleDateRangeChange(DateTimeRange newRange) async {
+    setState(() {
+      _selectedDateRange = newRange;
+      _isFetching = true; // Start loading spinner
+    });
+
+    if (widget.onFetchWebData != null) {
+      // ☁️ WEB: Ask the dashboard to fetch the new dates from Firebase
+      var fetched = await widget.onFetchWebData!(newRange);
+      if (mounted) {
+        setState(() {
+          _localRawData = fetched['rawData'] ?? [];
+          _localPosDatabase = fetched['posDatabase'] ?? {};
+          _isFetching = false; // Stop loading spinner
+        });
+      }
+    } else {
+      // 💻 WINDOWS: Data is already in memory, just stop the loader
+      setState(() {
+        _isFetching = false;
+      });
+    }
+  }
+
   // --- Core Logic: Filter and Export ---
   Future<void> _processAndExport(String format) async {
-    if (widget.rawData.isEmpty) {
+    // 🚀 USE LOCAL DATA HERE INSTEAD OF widget.rawData
+    if (_localRawData.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text(widget.isFrench ? "Aucune donnée disponible." : "No data available."),
+              content: Text(widget.isFrench ? "Aucune donnée disponible pour cette période." : "No data available for this period."),
               backgroundColor: Colors.redAccent
           )
       );
@@ -70,7 +113,7 @@ class _ExportScreenState extends State<ExportScreen> {
     }
 
     // 1. Filter Data
-    List<PeopleCount> filteredData = widget.rawData.where((item) {
+    List<PeopleCount> filteredData = _localRawData.where((item) {
       if (_selectedCamera != 'All Doors' && item.doorName != _selectedCamera) return false;
 
       var timeParts = item.time.split(':');
@@ -111,10 +154,11 @@ class _ExportScreenState extends State<ExportScreen> {
 
     for (DateTime d = _selectedDateRange.start; d.isBefore(_selectedDateRange.end.add(const Duration(days: 1))); d = d.add(const Duration(days: 1))) {
       String dateStr = "${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
-      if (widget.posDatabase.containsKey(dateStr)) {
-        totalRevenue += widget.posDatabase[dateStr]!['ca'] ?? 0;
-        totalClients += (widget.posDatabase[dateStr]!['clients'] ?? 0).toInt();
-        totalArticles += (widget.posDatabase[dateStr]!['articles'] ?? 0).toInt();
+      // 🚀 USE LOCAL DATA HERE INSTEAD OF widget.posDatabase
+      if (_localPosDatabase.containsKey(dateStr)) {
+        totalRevenue += _localPosDatabase[dateStr]!['ca'] ?? 0;
+        totalClients += (_localPosDatabase[dateStr]!['clients'] ?? 0).toInt();
+        totalArticles += (_localPosDatabase[dateStr]!['articles'] ?? 0).toInt();
       }
     }
 
@@ -126,8 +170,8 @@ class _ExportScreenState extends State<ExportScreen> {
     final prefs = await SharedPreferences.getInstance();
 
     // Get the Store Profile Data for the PDF
-    String storeName = prefs.getString('store_name') ?? "My Store";
-    String storeLocation = prefs.getString('store_location') ?? "MAIN BRANCH";
+    String storeName = widget.storeName ?? prefs.getString('store_name') ?? "My Store";
+    String storeLocation = widget.storeLocation ?? prefs.getString('store_location') ?? "MAIN BRANCH";
     String? storeLogoPath = prefs.getString('store_logo_path');
 
     // 🚀 4. SMART FILE NAMING
@@ -272,13 +316,34 @@ class _ExportScreenState extends State<ExportScreen> {
     );
   }
 
+  // 🚀 FIXED: Added Yearly and All Time logic, and fixed the Monthly 30-day bug
   void _applyPreset(String presetType) {
     DateTime end = DateTime.now();
     DateTime start = end;
-    if (presetType == 'Daily') { start = end; _currentFilter = ChartFilter.hourly; }
-    else if (presetType == 'Weekly') { start = end.subtract(const Duration(days: 6)); _currentFilter = ChartFilter.daily; }
-    else if (presetType == 'Monthly') { start = DateTime(end.year, end.month - 1, end.day); _currentFilter = ChartFilter.daily; }
-    setState(() => _selectedDateRange = DateTimeRange(start: start, end: end));
+
+    if (presetType == 'Daily') {
+      start = end;
+      _currentFilter = ChartFilter.hourly;
+    }
+    else if (presetType == 'Weekly') {
+      start = end.subtract(const Duration(days: 6));
+      _currentFilter = ChartFilter.daily;
+    }
+    else if (presetType == 'Monthly') {
+      start = end.subtract(const Duration(days: 30));
+      _currentFilter = ChartFilter.daily;
+    }
+    else if (presetType == 'Yearly') {
+      start = DateTime(end.year, 1, 1);
+      _currentFilter = ChartFilter.daily;
+    }
+    else if (presetType == 'AllTime') {
+      start = DateTime(2020, 1, 1);
+      _currentFilter = ChartFilter.daily;
+    }
+
+    // 🚀 Trigger the fetch
+    _handleDateRangeChange(DateTimeRange(start: start, end: end));
   }
 
   @override
@@ -319,16 +384,46 @@ class _ExportScreenState extends State<ExportScreen> {
 
                 Text(widget.isFrench ? '2. PLAGE DE DATES' : '2. DATE RANGE', style: TextStyle(color: _accentCyan, fontWeight: FontWeight.bold, letterSpacing: 1)),
                 const SizedBox(height: 12),
-                Row(children: [
-                  Expanded(child: _buildPresetButton('Daily', widget.isFrench ? 'Aujourd\'hui' : 'Today')), const SizedBox(width: 8),
-                  Expanded(child: _buildPresetButton('Weekly', widget.isFrench ? '7 Jours' : '7 Days')), const SizedBox(width: 8),
-                  Expanded(child: _buildPresetButton('Monthly', widget.isFrench ? '30 Jours' : '30 Days')),
-                ]),
+
+                // 🚀 FIXED: Replaced "Row" with "Wrap" so all 5 buttons fit beautifully without overflowing
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    _buildPresetButton('Daily', widget.isFrench ? 'Aujourd\'hui' : 'Today'),
+                    _buildPresetButton('Weekly', widget.isFrench ? '7 Jours' : '7 Days'),
+                    _buildPresetButton('Monthly', widget.isFrench ? '30 Jours' : '30 Days'),
+                    _buildPresetButton('Yearly', widget.isFrench ? 'Cette Année' : 'This Year'),
+                    _buildPresetButton('AllTime', widget.isFrench ? 'Tout le temps' : 'All Time'),
+                  ],
+                ),
                 const SizedBox(height: 16),
+
                 InkWell(
                     onTap: () async {
-                      DateTimeRange? picked = await showDateRangePicker(context: context, firstDate: DateTime(2020), lastDate: DateTime.now(), initialDateRange: _selectedDateRange, builder: (context, child) => Theme(data: ThemeData.dark().copyWith(colorScheme: ColorScheme.dark(primary: _accentCyan, surface: _cardDark)), child: child!));
-                      if (picked != null) setState(() => _selectedDateRange = picked);
+                      DateTimeRange? picked = await showDateRangePicker(
+                          context: context,
+                          // 🚀 ULTIMATE FIX: Opens directly in TEXT INPUT mode!
+                          // Now you can easily type "01/01/2025" and "17/03/2026" using your keyboard.
+                          initialEntryMode: DatePickerEntryMode.input,
+                          firstDate: DateTime(2020),
+                          // 🚀 ULTIMATE FIX: Allows selecting up to 10 years into the future!
+                          lastDate: DateTime.now().add(const Duration(days: 3650)),
+                          initialDateRange: _selectedDateRange,
+                          builder: (context, child) => Theme(
+                              data: ThemeData.dark().copyWith(
+                                  colorScheme: ColorScheme.dark(
+                                      primary: _accentCyan,
+                                      onPrimary: Colors.black,
+                                      surface: _cardDark,
+                                      onSurface: Colors.white
+                                  )
+                              ),
+                              child: child!
+                          )
+                      );
+                      // 🚀 USE THE NEW HANDLER TO TRIGGER A FETCH
+                      if (picked != null) _handleDateRangeChange(picked);
                     },
                     child: Container(
                         padding: const EdgeInsets.all(20), decoration: BoxDecoration(color: _cardDark, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.white.withOpacity(0.1))),
@@ -355,7 +450,10 @@ class _ExportScreenState extends State<ExportScreen> {
                 ),
                 const SizedBox(height: 48),
 
-                Row(children: [
+                // 🚀 SHOW LOADING SPINNER WHEN FETCHING NEW DATA
+                _isFetching
+                    ? Center(child: CircularProgressIndicator(color: _accentCyan))
+                    : Row(children: [
                   Expanded(child: ElevatedButton.icon(style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 20), backgroundColor: _accentCyan, foregroundColor: Colors.black, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))), icon: const Icon(Icons.picture_as_pdf), label: Text(widget.isFrench ? 'GÉNÉRER PDF' : 'GENERATE PDF', style: const TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1)), onPressed: () => _processAndExport('pdf'))),
                   const SizedBox(width: 16),
                   Expanded(child: ElevatedButton.icon(style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 20), backgroundColor: Colors.greenAccent, foregroundColor: Colors.black, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))), icon: const Icon(Icons.table_chart), label: Text(widget.isFrench ? 'GÉNÉRER CSV' : 'GENERATE CSV', style: const TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1)), onPressed: () => _processAndExport('csv')))
@@ -368,7 +466,17 @@ class _ExportScreenState extends State<ExportScreen> {
     );
   }
 
+  // 🚀 FIXED: Made the buttons smaller horizontally to fit perfectly in the Wrap
   Widget _buildPresetButton(String presetId, String label) {
-    return OutlinedButton(style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16), foregroundColor: Colors.white, side: BorderSide(color: Colors.white.withOpacity(0.2)), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))), onPressed: () => _applyPreset(presetId), child: Text(label, style: const TextStyle(fontWeight: FontWeight.bold)));
+    return OutlinedButton(
+        style: OutlinedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            foregroundColor: Colors.white,
+            side: BorderSide(color: Colors.white.withOpacity(0.2)),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))
+        ),
+        onPressed: () => _applyPreset(presetId),
+        child: Text(label, style: const TextStyle(fontWeight: FontWeight.bold))
+    );
   }
 }

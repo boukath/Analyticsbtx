@@ -9,6 +9,9 @@ import 'manage_users_screen.dart';
 import 'store_profile_screen.dart';
 import '../services/firebase_sync_service.dart'; // To call your history sync function
 
+// 🚀 NEW: Import our test screen for Polaris!
+import 'polaris_test_screen.dart';
+
 class DeveloperScreen extends StatelessWidget {
   final bool isFrench;
   final VoidCallback onSelectDataSource;
@@ -96,6 +99,16 @@ class DeveloperScreen extends StatelessWidget {
                     onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => StoreProfileScreen(isFrench: isFrench))),
                   ),
 
+                  // 🚀 CARD: Polaris Parser Test
+                  _buildDevCard(
+                    context,
+                    title: isFrench ? 'Testeur Polaris' : 'Polaris Parser Test',
+                    subtitle: isFrench ? 'Tester l\'extraction de données .sav' : 'Test extracting data from .sav',
+                    icon: Icons.receipt_long,
+                    color: Colors.deepPurpleAccent,
+                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const PolarisTestScreen())),
+                  ),
+
                   // CARD: Data Source
                   _buildDevCard(
                     context,
@@ -126,7 +139,7 @@ class DeveloperScreen extends StatelessWidget {
                     onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const FtpServerScreen())),
                   ),
 
-                  // 🚀 FIXED CARD: Force Cloud Sync
+                  // FIXED CARD: Force Cloud Sync
                   _buildDevCard(
                     context,
                     title: isFrench ? 'Sync Firestore' : 'Force Cloud Sync',
@@ -143,7 +156,7 @@ class DeveloperScreen extends StatelessWidget {
                       );
 
                       try {
-                        // 2. 🚀 USE THE PASSED FOLDER PATH DIRECTLY
+                        // 2. USE THE PASSED FOLDER PATH DIRECTLY
                         if (currentFolderPath != null && currentFolderPath!.isNotEmpty) {
                           // 3. Trigger your full history sync method
                           await FirebaseSyncService.syncFullFolderHistory(currentFolderPath!);

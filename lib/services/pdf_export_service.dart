@@ -2,8 +2,8 @@
 
 import 'dart:io';
 import 'dart:typed_data';
-import 'package:flutter/foundation.dart'; // 🚀 NEW: For kIsWeb
-import 'package:printing/printing.dart';  // 🚀 NEW: For web PDF sharing
+import 'package:flutter/foundation.dart'; // 🚀 For kIsWeb
+import 'package:printing/printing.dart';  // 🚀 For web PDF sharing
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import '../models/people_count.dart';
@@ -19,7 +19,7 @@ class PdfExportService {
     required int totalOut,
     required String peakHour,
     required String outputPath,
-    // 🚀 NEW: STORE PROFILE PARAMETERS
+    // 🚀 STORE PROFILE PARAMETERS
     required String storeName,
     required String storeLocation,
     String? storeLogoPath,
@@ -56,6 +56,10 @@ class PdfExportService {
     // 4. Build the PDF pages
     pdf.addPage(
       pw.MultiPage(
+        // 🚀 ULTIMATE FIX: Override the default 20-page limit!
+        // This allows up to 5000 pages for massive yearly/all-time data exports.
+        maxPages: 5000,
+
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(40),
 
@@ -81,22 +85,36 @@ class PdfExportService {
                         ),
                         pw.SizedBox(width: 16),
                       ],
-                      // Store Name & Location
+                      // 🚀 Explicit Client and Location formatting on Top Left!
                       pw.Column(
                         crossAxisAlignment: pw.CrossAxisAlignment.start,
                         children: [
                           pw.Text(
-                              storeName.toUpperCase(),
-                              style: pw.TextStyle(color: accentColor, fontSize: 12, letterSpacing: 2, fontWeight: pw.FontWeight.bold)
+                              'CLIENT: ${storeName.toUpperCase()}',
+                              style: pw.TextStyle(
+                                color: accentColor,
+                                fontSize: 14,
+                                letterSpacing: 1.5,
+                                fontWeight: pw.FontWeight.bold,
+                              )
                           ),
+                          pw.SizedBox(height: 2),
                           pw.Text(
-                              storeLocation,
-                              style: const pw.TextStyle(color: PdfColors.grey700, fontSize: 10)
+                              'LOCATION: ${storeLocation.toUpperCase()}',
+                              style: pw.TextStyle(
+                                color: PdfColors.grey700,
+                                fontSize: 11,
+                                fontWeight: pw.FontWeight.bold,
+                              )
                           ),
-                          pw.SizedBox(height: 4),
+                          pw.SizedBox(height: 8),
                           pw.Text(
                               'Traffic Analytics Report',
-                              style: pw.TextStyle(color: primaryColor, fontSize: 24, fontWeight: pw.FontWeight.bold)
+                              style: pw.TextStyle(
+                                color: primaryColor,
+                                fontSize: 24,
+                                fontWeight: pw.FontWeight.bold,
+                              )
                           ),
                         ],
                       ),
@@ -133,22 +151,17 @@ class PdfExportService {
 
         // --- BODY CONTENT ---
         build: (pw.Context context) {
-          // Calculate the true total visitors
           int totalVisitors = (totalIn + totalOut) ~/ 2;
 
           return [
-            // SUMMARY CARDS WRAP (Allows cards to flow to the next line nicely)
             pw.Wrap(
               spacing: 12,
               runSpacing: 12,
               children: [
-                // TRAFFIC METRICS
                 _buildPdfSummaryCard('TOTAL IN', totalIn.toString(), primaryColor, textLight),
                 _buildPdfSummaryCard('TOTAL OUT', totalOut.toString(), primaryColor, textLight),
                 _buildPdfSummaryCard('TOTAL VISITORS', totalVisitors.toString(), primaryColor, accentColor),
                 _buildPdfSummaryCard('PEAK HOUR', peakHour, primaryColor, textLight),
-
-                // POS METRIC CARDS
                 _buildPdfSummaryCard('REVENUE', '${revenue.toStringAsFixed(0)} DZD', PdfColor.fromHex('#E8F5E9'), PdfColor.fromHex('#2E7D32')),
                 _buildPdfSummaryCard('CLIENTS', clients.toString(), PdfColor.fromHex('#F3E5F5'), PdfColor.fromHex('#6A1B9A')),
                 _buildPdfSummaryCard('CONV RATE', '${conversionRate.toStringAsFixed(1)}%', PdfColor.fromHex('#FFF3E0'), PdfColor.fromHex('#EF6C00')),
@@ -158,11 +171,9 @@ class PdfExportService {
             ),
             pw.SizedBox(height: 30),
 
-            // DATA TABLE TITLE
             pw.Text('Detailed Traffic Breakdown', style: pw.TextStyle(color: primaryColor, fontSize: 16, fontWeight: pw.FontWeight.bold)),
             pw.SizedBox(height: 10),
 
-            // THE DATA TABLE
             pw.TableHelper.fromTextArray(
               context: context,
               cellAlignment: pw.Alignment.centerLeft,
@@ -172,9 +183,7 @@ class PdfExportService {
               rowDecoration: const pw.BoxDecoration(border: pw.Border(bottom: pw.BorderSide(color: PdfColors.grey200, width: 0.5))),
               headers: ['Date', 'Time', 'Door/Camera', 'Entrances (IN)', 'Exits (OUT)', 'Total Visitors'],
               data: data.map((item) {
-                // THE MATH FIX: (IN + OUT) / 2
                 int visitors = (item.inCount + item.outCount) ~/ 2;
-
                 return [
                   item.date,
                   item.time,
@@ -190,23 +199,19 @@ class PdfExportService {
       ),
     );
 
-    // 🚀 5. SAVE OR DOWNLOAD THE FILE
     final Uint8List bytes = await pdf.save();
 
     if (kIsWeb) {
-      // 🌐 WEB BEHAVIOR: Trigger the browser's native print/download dialog
       await Printing.sharePdf(
         bytes: bytes,
         filename: 'Traffic_Analytics_${reportType}_$dateRangeText.pdf',
       );
     } else {
-      // 💻 WINDOWS BEHAVIOR: Silently save to disk
       final File file = File(outputPath);
       await file.writeAsBytes(bytes);
     }
   }
 
-  // Helper widget to draw the premium summary boxes in the PDF
   static pw.Widget _buildPdfSummaryCard(String title, String value, PdfColor bgColor, PdfColor textColor) {
     return pw.Container(
       width: 110,

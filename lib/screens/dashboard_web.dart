@@ -261,6 +261,60 @@ class _DashboardWebState extends State<DashboardWeb> {
     }
   }
 
+  // 🚀 NEW: Helper to fetch data strictly for the Export Screen
+  Future<Map<String, dynamic>> _fetchDataForExport(DateTimeRange range) async {
+    List<PeopleCount> loadedData = [];
+    Map<String, Map<String, num>> loadedPos = {};
+
+    if (_selectedStoreId.isEmpty || _clientId.isEmpty) return {'rawData': loadedData, 'posDatabase': loadedPos};
+
+    try {
+      for (DateTime d = range.start; d.isBefore(range.end.add(const Duration(days: 1))); d = d.add(const Duration(days: 1))) {
+        String dateKey = "${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
+
+        DocumentSnapshot doc = await FirebaseFirestore.instance
+            .collection('clients').doc(_clientId)
+            .collection('stores').doc(_selectedStoreId)
+            .collection('daily_traffic').doc(dateKey).get();
+
+        if (doc.exists && doc.data() != null) {
+          Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+
+          if (data.containsKey('cameras')) {
+            data['cameras'].forEach((cameraName, hourly) {
+              if (hourly is Map) {
+                hourly.forEach((time, counts) {
+                  loadedData.add(PeopleCount(
+                    date: "${d.day.toString().padLeft(2,'0')}/${d.month.toString().padLeft(2,'0')}/${d.year}",
+                    time: time, doorName: cameraName, inCount: counts['in'] ?? 0, outCount: counts['out'] ?? 0, shopId: _selectedStoreId,
+                  ));
+                });
+              }
+            });
+          } else if (data.containsKey('hourly_data')) {
+            data['hourly_data'].forEach((time, counts) {
+              loadedData.add(PeopleCount(
+                date: "${d.day.toString().padLeft(2,'0')}/${d.month.toString().padLeft(2,'0')}/${d.year}",
+                time: time, doorName: "All Doors", inCount: counts['in'] ?? 0, outCount: counts['out'] ?? 0, shopId: _selectedStoreId,
+              ));
+            });
+          }
+
+          if (data.containsKey('pos')) {
+            loadedPos[dateKey] = {
+              'ca': ((data['pos']['ca'] ?? 0) as num).toDouble(),
+              'clients': ((data['pos']['clients'] ?? 0) as num).toInt(),
+              'articles': ((data['pos']['articles'] ?? 0) as num).toInt(),
+            };
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint("Export Fetch Error: $e");
+    }
+    return {'rawData': loadedData, 'posDatabase': loadedPos};
+  }
+
   void _applyFilter() {
     setState(() {
       // 🚀 FIXED: Auto-switch between Hourly and Daily views depending on selected dates
@@ -424,7 +478,6 @@ class _DashboardWebState extends State<DashboardWeb> {
     );
   }
 
-  // 🚀 NEW: Navigation to Export Screen, passing the collected Cloud Data
   void _navigateToExport() {
     Navigator.push(
       context,
@@ -435,7 +488,11 @@ class _DashboardWebState extends State<DashboardWeb> {
           isFrench: _isFrench,
           workingMinuteStart: _workingMinuteStart,
           workingMinuteEnd: _workingMinuteEnd,
-          posDatabase: _posDatabase, // Passed perfectly structured POS data here!
+          posDatabase: _posDatabase,
+          onFetchWebData: _fetchDataForExport,
+          // 🚀 ADD THESE TWO LINES:
+          storeName: _storeName,
+          storeLocation: _storeLocation,
         ),
       ),
     );
