@@ -48,6 +48,9 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
   ChartFilter _currentFilter = ChartFilter.hourly;
   DateTimeRange? _selectedDateRange;
 
+  // 🚀 NEW: Flag to toggle between Chart Mode and Table Mode
+  bool _isTableMode = false;
+
   // 🚀 Flag to toggle POS (Retail) vs Footfall (Mall) mode
   bool _enablePosFeatures = true;
 
@@ -1173,6 +1176,263 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
     );
   }
 
+  // 🚀 WRAPPER: Decides which table layout to show
+  Widget _buildTableView() {
+    bool showMatrix = _selectedCamera == 'All Doors' && _availableCameras.length > 2 && !_isCompareMode;
+
+    if (showMatrix) {
+      return _buildMatrixTable(); // Shows the horizontal pivot table for 40+ cameras
+    } else {
+      return _buildStandardTable(); // Shows the normal table for a single camera
+    }
+  }
+
+  // 🚀 NEW: The Horizontal Pivot Matrix for "Vue Globale"
+  Widget _buildMatrixTable() {
+    List<String> individualDoors = _availableCameras.where((c) => c != 'All Doors').toList();
+
+    const double timeColWidth = 100;
+    const double dataColWidth = 70;
+
+    // Calculate totals for footer
+    Map<String, int> doorInTotals = {};
+    Map<String, int> doorOutTotals = {};
+
+    for (String door in individualDoors) {
+      doorInTotals[door] = 0;
+      doorOutTotals[door] = 0;
+    }
+
+    // Pre-calculate data row structure
+    List<Map<String, dynamic>> rowData = [];
+    for (int i = 0; i < _displayedData.length; i++) {
+      var globalItem = _displayedData[i];
+      String timeLabel = _currentFilter == ChartFilter.hourly ? globalItem.time : globalItem.date;
+
+      Map<String, dynamic> row = {
+        'time': timeLabel,
+        'globalIn': globalItem.inCount,
+        'globalOut': globalItem.outCount,
+        'doors': <String, Map<String, int>>{}
+      };
+
+      for (String door in individualDoors) {
+        int dIn = 0;
+        int dOut = 0;
+        if (_perDoorData[door] != null) {
+          var match = _perDoorData[door]!.where((d) =>
+          (_currentFilter == ChartFilter.hourly ? d.time == globalItem.time : d.date == globalItem.date)).toList();
+          if (match.isNotEmpty) {
+            dIn = match.first.inCount;
+            dOut = match.first.outCount;
+          }
+        }
+        row['doors'][door] = {'in': dIn, 'out': dOut};
+        doorInTotals[door] = doorInTotals[door]! + dIn;
+        doorOutTotals[door] = doorOutTotals[door]! + dOut;
+      }
+      rowData.add(row);
+    }
+
+    Widget buildCell(String text, double width, {Color? color, bool isTitle = false, bool rightBorder = false}) {
+      return Container(
+        width: width,
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+        decoration: rightBorder ? BoxDecoration(border: Border(right: BorderSide(color: Colors.white.withOpacity(0.1)))) : null,
+        child: Text(
+          text,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: color ?? (isTitle ? Colors.white : Colors.white54),
+            fontWeight: isTitle ? FontWeight.w900 : FontWeight.bold,
+            fontSize: isTitle ? 13 : 12,
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      );
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        color: _bgDark.withOpacity(0.5),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withOpacity(0.05)),
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        child: IntrinsicWidth(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // --- TOP HEADER (CAMERA NAMES) ---
+              Container(
+                decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), borderRadius: const BorderRadius.vertical(top: Radius.circular(16))),
+                child: Row(
+                  children: [
+                    buildCell('', timeColWidth, rightBorder: true), // Empty above Time
+                    buildCell(_isFrench ? 'GLOBAL' : 'GLOBAL', dataColWidth * 2, isTitle: true, color: Colors.white, rightBorder: true),
+                    ...individualDoors.map((door) => buildCell(door.toUpperCase(), dataColWidth * 2, isTitle: true, color: _accentCyan, rightBorder: true)).toList(),
+                  ],
+                ),
+              ),
+
+              // --- SUB HEADER (IN / OUT) ---
+              Container(
+                decoration: BoxDecoration(color: Colors.white.withOpacity(0.03), border: Border(bottom: BorderSide(color: Colors.white.withOpacity(0.1)))),
+                child: Row(
+                  children: [
+                    buildCell(_isFrench ? 'Période' : 'Time', timeColWidth, isTitle: true, rightBorder: true),
+                    buildCell('IN', dataColWidth, color: Colors.greenAccent),
+                    buildCell('OUT', dataColWidth, color: Colors.redAccent, rightBorder: true),
+                    ...individualDoors.expand((door) => [
+                      buildCell('IN', dataColWidth, color: Colors.greenAccent),
+                      buildCell('OUT', dataColWidth, color: Colors.redAccent, rightBorder: true),
+                    ]).toList(),
+                  ],
+                ),
+              ),
+
+              // --- DATA ROWS ---
+              Expanded(
+                child: ListView.builder(
+                  itemCount: rowData.length,
+                  itemBuilder: (context, index) {
+                    var row = rowData[index];
+                    return Container(
+                      decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white.withOpacity(0.02)))),
+                      child: Row(
+                        children: [
+                          buildCell(row['time'], timeColWidth, color: Colors.white, isTitle: true, rightBorder: true),
+                          buildCell(row['globalIn'].toString(), dataColWidth, color: Colors.greenAccent),
+                          buildCell(row['globalOut'].toString(), dataColWidth, color: Colors.redAccent, rightBorder: true),
+                          ...individualDoors.expand((door) => [
+                            buildCell(row['doors'][door]['in'].toString(), dataColWidth, color: Colors.greenAccent.withOpacity(0.7)),
+                            buildCell(row['doors'][door]['out'].toString(), dataColWidth, color: Colors.redAccent.withOpacity(0.7), rightBorder: true),
+                          ]).toList(),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+
+              // --- FOOTER ROW (TOTALS) ---
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.05),
+                  borderRadius: const BorderRadius.vertical(bottom: Radius.circular(16)),
+                  border: Border(top: BorderSide(color: Colors.white.withOpacity(0.1))),
+                ),
+                child: Row(
+                  children: [
+                    buildCell('TOTAL', timeColWidth, isTitle: true, color: Colors.white, rightBorder: true),
+                    buildCell(_totalIn.toString(), dataColWidth, color: Colors.greenAccent, isTitle: true),
+                    buildCell(_totalOut.toString(), dataColWidth, color: Colors.redAccent, isTitle: true, rightBorder: true),
+                    ...individualDoors.expand((door) => [
+                      buildCell(doorInTotals[door].toString(), dataColWidth, color: Colors.greenAccent, isTitle: true),
+                      buildCell(doorOutTotals[door].toString(), dataColWidth, color: Colors.redAccent, isTitle: true, rightBorder: true),
+                    ]).toList(),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // 🚀 EXISTING: The Standard Table for a Single Camera (or Compare mode)
+  Widget _buildStandardTable() {
+    bool isCompare = _isCompareMode && _compareDisplayedData.isNotEmpty;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: _bgDark.withOpacity(0.5),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withOpacity(0.05)),
+      ),
+      child: Column(
+        children: [
+          // --- HEADER ROW ---
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+            decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), borderRadius: const BorderRadius.vertical(top: Radius.circular(16))),
+            child: Row(
+              children: [
+                Expanded(flex: 2, child: Text(_isFrench ? 'Période' : 'Time', style: const TextStyle(color: Colors.white54, fontWeight: FontWeight.bold))),
+                Expanded(child: Text(_isFrench ? 'Entrées' : 'In', textAlign: TextAlign.center, style: const TextStyle(color: Colors.white54, fontWeight: FontWeight.bold))),
+                Expanded(child: Text(_isFrench ? 'Sorties' : 'Out', textAlign: TextAlign.center, style: const TextStyle(color: Colors.white54, fontWeight: FontWeight.bold))),
+                if (isCompare) ...[
+                  Expanded(child: Text(_isFrench ? 'Préc. In' : 'Prev In', textAlign: TextAlign.center, style: const TextStyle(color: Colors.white54, fontWeight: FontWeight.bold))),
+                  Expanded(child: Text(_isFrench ? 'Préc. Out' : 'Prev Out', textAlign: TextAlign.center, style: const TextStyle(color: Colors.white54, fontWeight: FontWeight.bold))),
+                ],
+                Expanded(child: Text(_isFrench ? 'Total' : 'Total', textAlign: TextAlign.right, style: const TextStyle(color: Colors.white54, fontWeight: FontWeight.bold))),
+              ],
+            ),
+          ),
+
+          // --- DATA ROWS ---
+          Expanded(
+            child: ListView.builder(
+              itemCount: _displayedData.length,
+              itemBuilder: (context, index) {
+                var item = _displayedData[index];
+                String timeLabel = _currentFilter == ChartFilter.hourly ? item.time : item.date;
+                int total = (item.inCount + item.outCount) ~/ 2;
+
+                PeopleCount? compareItem;
+                if (isCompare && index < _compareDisplayedData.length) compareItem = _compareDisplayedData[index];
+
+                return Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white.withOpacity(0.02)))),
+                  child: Row(
+                    children: [
+                      Expanded(flex: 2, child: Text(timeLabel, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600))),
+                      Expanded(child: Text(item.inCount.toString(), textAlign: TextAlign.center, style: const TextStyle(color: Colors.greenAccent))),
+                      Expanded(child: Text(item.outCount.toString(), textAlign: TextAlign.center, style: const TextStyle(color: Colors.redAccent))),
+                      if (isCompare) ...[
+                        Expanded(child: Text(compareItem?.inCount.toString() ?? '-', textAlign: TextAlign.center, style: const TextStyle(color: Colors.white54))),
+                        Expanded(child: Text(compareItem?.outCount.toString() ?? '-', textAlign: TextAlign.center, style: const TextStyle(color: Colors.white54))),
+                      ],
+                      Expanded(child: Text(total.toString(), textAlign: TextAlign.right, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold))),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+
+          // --- 🚀 NEW: FOOTER ROW (TOTALS) ---
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.05),
+              borderRadius: const BorderRadius.vertical(bottom: Radius.circular(16)),
+              border: Border(top: BorderSide(color: Colors.white.withOpacity(0.1))),
+            ),
+            child: Row(
+              children: [
+                Expanded(flex: 2, child: Text('TOTAL', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 14))),
+                Expanded(child: Text(_totalIn.toString(), textAlign: TextAlign.center, style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 14))),
+                Expanded(child: Text(_totalOut.toString(), textAlign: TextAlign.center, style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold, fontSize: 14))),
+                if (isCompare) ...[
+                  Expanded(child: Text(_compareTotalIn.toString(), textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.bold, fontSize: 14))),
+                  Expanded(child: Text(_compareTotalOut.toString(), textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.bold, fontSize: 14))),
+                ],
+                // Calculating Grand Total Visitors -> (Total In + Total Out) / 2
+                Expanded(child: Text(((_totalIn + _totalOut) ~/ 2).toString(), textAlign: TextAlign.right, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 14))),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDesktop = MediaQuery.of(context).size.width > 800;
@@ -1769,20 +2029,50 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
-                    decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.white.withOpacity(0.1))),
-                    child: DropdownButtonHideUnderline(
-                      child: DropdownButton<ChartFilter>(
-                        dropdownColor: _cardDark, icon: const Icon(Icons.expand_more, color: Colors.white70), value: _currentFilter,
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 15, letterSpacing: 0.5),
-                        items: [
-                          DropdownMenuItem(value: ChartFilter.hourly, child: Text(_isFrench ? 'Vue Horaire' : 'Hourly View')),
-                          DropdownMenuItem(value: ChartFilter.daily, child: Text(_isFrench ? 'Vue Journalière' : 'Daily View'))
-                        ],
-                        onChanged: (ChartFilter? newValue) { if (newValue != null) { setState(() { _currentFilter = newValue; _applyFilter(); }); } },
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // 🚀 NEW: View Toggle (Chart / Table)
+                      Container(
+                        decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.05),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: Colors.white.withOpacity(0.1))
+                        ),
+                        child: Row(
+                          children: [
+                            IconButton(
+                              icon: Icon(Icons.show_chart, color: !_isTableMode ? _accentCyan : Colors.white54, size: 20),
+                              onPressed: () => setState(() => _isTableMode = false),
+                              tooltip: _isFrench ? 'Graphique' : 'Chart',
+                            ),
+                            IconButton(
+                              icon: Icon(Icons.table_chart, color: _isTableMode ? _accentCyan : Colors.white54, size: 20),
+                              onPressed: () => setState(() => _isTableMode = true),
+                              tooltip: _isFrench ? 'Tableau' : 'Table',
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
+                      const SizedBox(width: 12),
+
+                      // Existing Dropdown
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+                        decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.white.withOpacity(0.1))),
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<ChartFilter>(
+                            dropdownColor: _cardDark, icon: const Icon(Icons.expand_more, color: Colors.white70), value: _currentFilter,
+                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 15, letterSpacing: 0.5),
+                            items: [
+                              DropdownMenuItem(value: ChartFilter.hourly, child: Text(_isFrench ? 'Vue Horaire' : 'Hourly View')),
+                              DropdownMenuItem(value: ChartFilter.daily, child: Text(_isFrench ? 'Vue Journalière' : 'Daily View'))
+                            ],
+                            onChanged: (ChartFilter? newValue) { if (newValue != null) { setState(() { _currentFilter = newValue; _applyFilter(); }); } },
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 24),
 
@@ -1814,7 +2104,8 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
 
           SizedBox(
             height: 380,
-            child: LineChart(
+            // 🚀 NEW: Decide what to render based on the toggle state!
+            child: _isTableMode ? _buildTableView() : LineChart(
               LineChartData(
                 minY: 0,
                 maxY: maxTrafficY * 1.15,

@@ -24,6 +24,9 @@ class _DashboardWebState extends State<DashboardWeb> {
   List<PeopleCount> _rawData = [];
   List<PeopleCount> _displayedData = [];
 
+  // 🚀 Store separated data for the Matrix Table
+  Map<String, List<PeopleCount>> _perDoorData = {};
+
   bool _isLoading = true;
   ChartFilter _currentFilter = ChartFilter.hourly;
   DateTimeRange? _selectedDateRange;
@@ -32,8 +35,10 @@ class _DashboardWebState extends State<DashboardWeb> {
   int _workingMinuteStart = 0;
   int _workingMinuteEnd = 1439;
 
+  // 🚀 Flag to toggle between Chart Mode and Table Mode
+  bool _isTableMode = false;
+
   // 🚀 Flag to toggle POS (Retail) vs Footfall (Mall) mode
-  // This is now driven dynamically by the selected store's configuration in Firebase!
   bool _enablePosFeatures = true;
 
   // Camera Variables
@@ -50,6 +55,11 @@ class _DashboardWebState extends State<DashboardWeb> {
   int _currentArticles = 0;
 
   Map<String, Map<String, num>> _posDatabase = {};
+
+  // 🚀 FAST LOOKUP DATA FOR MATRIX
+  List<Map<String, dynamic>> _matrixRowData = [];
+  Map<String, int> _matrixDoorInTotals = {};
+  Map<String, int> _matrixDoorOutTotals = {};
 
   String _loggedInUserName = "Loading...";
   String _loggedInRole = "client";
@@ -148,7 +158,6 @@ class _DashboardWebState extends State<DashboardWeb> {
 
       List<Map<String, dynamic>> stores = [];
       for (var doc in storeSnapshot.docs) {
-        // 🚀 SMART CLOUD CHECK: Does this store have POS enabled in Firebase?
         bool enablePos = true;
         if (doc.data() is Map<String, dynamic>) {
           var data = doc.data() as Map<String, dynamic>;
@@ -161,7 +170,7 @@ class _DashboardWebState extends State<DashboardWeb> {
           'id': doc.id,
           'brand': doc.data().toString().contains('brand') ? doc.get('brand') : 'Unknown',
           'location': doc.data().toString().contains('location') ? doc.get('location') : doc.id,
-          'enable_pos_features': enablePos, // 🚀 Save the mode to the list!
+          'enable_pos_features': enablePos,
         });
       }
 
@@ -171,7 +180,6 @@ class _DashboardWebState extends State<DashboardWeb> {
           _selectedStoreId = stores.first['id'];
           _storeName = stores.first['brand'];
           _storeLocation = stores.first['location'];
-          // 🚀 Apply the mode immediately upon load!
           _enablePosFeatures = stores.first['enable_pos_features'];
         });
         await _fetchCloudDataForDateRange();
@@ -370,6 +378,20 @@ class _DashboardWebState extends State<DashboardWeb> {
         _displayedData = DataAggregator.aggregateByHour(filteredData);
       }
 
+      _perDoorData.clear();
+      if (_selectedCamera == 'All Doors' && _availableCameras.length > 2) {
+        for (String door in _availableCameras) {
+          if (door == 'All Doors') continue;
+
+          var doorSpecificData = filteredData.where((item) => item.doorName == door).toList();
+          if (_currentFilter == ChartFilter.daily) {
+            _perDoorData[door] = DataAggregator.aggregateByDay(doorSpecificData);
+          } else {
+            _perDoorData[door] = DataAggregator.aggregateByHour(doorSpecificData);
+          }
+        }
+      }
+
       _totalIn = 0; _totalOut = 0; int maxTraffic = 0; _peakHour = "--:--";
       for (var item in _displayedData) {
         _totalIn += item.inCount;
@@ -383,6 +405,64 @@ class _DashboardWebState extends State<DashboardWeb> {
 
       _occupancy = _totalIn - _totalOut;
       if (_occupancy < 0) _occupancy = 0;
+
+      // ==========================================================
+      // 🚀 NEW OPTIMIZATION: Pre-calculate Matrix Data here instantly!
+      // ==========================================================
+      _matrixRowData.clear();
+      _matrixDoorInTotals.clear();
+      _matrixDoorOutTotals.clear();
+
+      if (_selectedCamera == 'All Doors' && _availableCameras.length > 2) {
+        List<String> individualDoors = _availableCameras.where((c) => c != 'All Doors').toList();
+
+        // 1. Initialize Totals
+        for (String door in individualDoors) {
+          _matrixDoorInTotals[door] = 0;
+          _matrixDoorOutTotals[door] = 0;
+        }
+
+        // 2. Build Fast Lookup HashMaps -> O(1) speed instead of O(N) list searches!
+        Map<String, Map<String, PeopleCount>> fastLookup = {};
+        for(String door in individualDoors) {
+          fastLookup[door] = {};
+          if (_perDoorData[door] != null) {
+            for(var item in _perDoorData[door]!) {
+              String key = _currentFilter == ChartFilter.hourly ? item.time : item.date;
+              fastLookup[door]![key] = item;
+            }
+          }
+        }
+
+        // 3. Construct the rows
+        for (var globalItem in _displayedData) {
+          String timeLabel = _currentFilter == ChartFilter.hourly ? globalItem.time : globalItem.date;
+          Map<String, dynamic> row = {
+            'time': timeLabel,
+            'globalIn': globalItem.inCount,
+            'globalOut': globalItem.outCount,
+            'doors': <String, Map<String, int>>{}
+          };
+
+          for (String door in individualDoors) {
+            int dIn = 0;
+            int dOut = 0;
+
+            // ⚡ INSTANT LOOKUP (No loops!)
+            PeopleCount? match = fastLookup[door]?[timeLabel];
+            if (match != null) {
+              dIn = match.inCount;
+              dOut = match.outCount;
+            }
+
+            row['doors'][door] = {'in': dIn, 'out': dOut};
+            _matrixDoorInTotals[door] = (_matrixDoorInTotals[door] ?? 0) + dIn;
+            _matrixDoorOutTotals[door] = (_matrixDoorOutTotals[door] ?? 0) + dOut;
+          }
+          _matrixRowData.add(row);
+        }
+      }
+      // ==========================================================
     });
   }
 
@@ -477,7 +557,6 @@ class _DashboardWebState extends State<DashboardWeb> {
                     _selectedStoreId = store['id'];
                     _storeName = store['brand'];
                     _storeLocation = store['location'];
-                    // 🚀 Update the dashboard mode instantly when switching stores!
                     _enablePosFeatures = store['enable_pos_features'];
                   });
                   Navigator.pop(context);
@@ -695,6 +774,194 @@ class _DashboardWebState extends State<DashboardWeb> {
     );
   }
 
+  // 🚀 Decides which table layout to show
+  Widget _buildTableView() {
+    bool showMatrix = _selectedCamera == 'All Doors' && _availableCameras.length > 2;
+
+    if (showMatrix) {
+      return _buildMatrixTable();
+    } else {
+      return _buildStandardTable();
+    }
+  }
+
+  // 🚀 OPTIMIZED: Horizontal Pivot Matrix for "Vue Globale"
+  Widget _buildMatrixTable() {
+    List<String> individualDoors = _availableCameras.where((c) => c != 'All Doors').toList();
+
+    const double timeColWidth = 100;
+    const double dataColWidth = 70;
+
+    Widget buildCell(String text, double width, {Color? color, bool isTitle = false, bool rightBorder = false}) {
+      return Container(
+        width: width,
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+        decoration: rightBorder ? BoxDecoration(border: Border(right: BorderSide(color: Colors.white.withOpacity(0.1)))) : null,
+        child: Text(
+          text,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: color ?? (isTitle ? Colors.white : Colors.white54),
+            fontWeight: isTitle ? FontWeight.w900 : FontWeight.bold,
+            fontSize: isTitle ? 13 : 12,
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      );
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        color: _bgDark.withOpacity(0.5),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withOpacity(0.05)),
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        child: IntrinsicWidth(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), borderRadius: const BorderRadius.vertical(top: Radius.circular(16))),
+                child: Row(
+                  children: [
+                    buildCell('', timeColWidth, rightBorder: true),
+                    buildCell(_isFrench ? 'GLOBAL' : 'GLOBAL', dataColWidth * 2, isTitle: true, color: Colors.white, rightBorder: true),
+                    ...individualDoors.map((door) => buildCell(door.toUpperCase(), dataColWidth * 2, isTitle: true, color: _accentCyan, rightBorder: true)).toList(),
+                  ],
+                ),
+              ),
+              Container(
+                decoration: BoxDecoration(color: Colors.white.withOpacity(0.03), border: Border(bottom: BorderSide(color: Colors.white.withOpacity(0.1)))),
+                child: Row(
+                  children: [
+                    buildCell(_isFrench ? 'Période' : 'Time', timeColWidth, isTitle: true, rightBorder: true),
+                    buildCell('IN', dataColWidth, color: Colors.greenAccent),
+                    buildCell('OUT', dataColWidth, color: Colors.redAccent, rightBorder: true),
+                    ...individualDoors.expand((door) => [
+                      buildCell('IN', dataColWidth, color: Colors.greenAccent),
+                      buildCell('OUT', dataColWidth, color: Colors.redAccent, rightBorder: true),
+                    ]).toList(),
+                  ],
+                ),
+              ),
+              // ⚡ ListView.builder only renders rows visible on screen
+              Expanded(
+                child: ListView.builder(
+                  itemCount: _matrixRowData.length,
+                  itemBuilder: (context, index) {
+                    var row = _matrixRowData[index];
+                    return Container(
+                      decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white.withOpacity(0.02)))),
+                      child: Row(
+                        children: [
+                          buildCell(row['time'], timeColWidth, color: Colors.white, isTitle: true, rightBorder: true),
+                          buildCell(row['globalIn'].toString(), dataColWidth, color: Colors.greenAccent),
+                          buildCell(row['globalOut'].toString(), dataColWidth, color: Colors.redAccent, rightBorder: true),
+                          ...individualDoors.expand((door) => [
+                            buildCell(row['doors'][door]['in'].toString(), dataColWidth, color: Colors.greenAccent.withOpacity(0.7)),
+                            buildCell(row['doors'][door]['out'].toString(), dataColWidth, color: Colors.redAccent.withOpacity(0.7), rightBorder: true),
+                          ]).toList(),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.05),
+                  borderRadius: const BorderRadius.vertical(bottom: Radius.circular(16)),
+                  border: Border(top: BorderSide(color: Colors.white.withOpacity(0.1))),
+                ),
+                child: Row(
+                  children: [
+                    buildCell('TOTAL', timeColWidth, isTitle: true, color: Colors.white, rightBorder: true),
+                    buildCell(_totalIn.toString(), dataColWidth, color: Colors.greenAccent, isTitle: true),
+                    buildCell(_totalOut.toString(), dataColWidth, color: Colors.redAccent, isTitle: true, rightBorder: true),
+                    ...individualDoors.expand((door) => [
+                      buildCell(_matrixDoorInTotals[door].toString(), dataColWidth, color: Colors.greenAccent, isTitle: true),
+                      buildCell(_matrixDoorOutTotals[door].toString(), dataColWidth, color: Colors.redAccent, isTitle: true, rightBorder: true),
+                    ]).toList(),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // 🚀 Standard Table for a Single Camera
+  Widget _buildStandardTable() {
+    return Container(
+      decoration: BoxDecoration(
+        color: _bgDark.withOpacity(0.5),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withOpacity(0.05)),
+      ),
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+            decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), borderRadius: const BorderRadius.vertical(top: Radius.circular(16))),
+            child: Row(
+              children: [
+                Expanded(flex: 2, child: Text(_isFrench ? 'Période' : 'Time', style: const TextStyle(color: Colors.white54, fontWeight: FontWeight.bold))),
+                Expanded(child: Text(_isFrench ? 'Entrées' : 'In', textAlign: TextAlign.center, style: const TextStyle(color: Colors.white54, fontWeight: FontWeight.bold))),
+                Expanded(child: Text(_isFrench ? 'Sorties' : 'Out', textAlign: TextAlign.center, style: const TextStyle(color: Colors.white54, fontWeight: FontWeight.bold))),
+                Expanded(child: Text(_isFrench ? 'Total' : 'Total', textAlign: TextAlign.right, style: const TextStyle(color: Colors.white54, fontWeight: FontWeight.bold))),
+              ],
+            ),
+          ),
+          Expanded(
+            child: ListView.builder(
+              itemCount: _displayedData.length,
+              itemBuilder: (context, index) {
+                var item = _displayedData[index];
+                String timeLabel = _currentFilter == ChartFilter.hourly ? item.time : item.date;
+                int total = (item.inCount + item.outCount) ~/ 2;
+
+                return Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.white.withOpacity(0.02)))),
+                  child: Row(
+                    children: [
+                      Expanded(flex: 2, child: Text(timeLabel, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600))),
+                      Expanded(child: Text(item.inCount.toString(), textAlign: TextAlign.center, style: const TextStyle(color: Colors.greenAccent))),
+                      Expanded(child: Text(item.outCount.toString(), textAlign: TextAlign.center, style: const TextStyle(color: Colors.redAccent))),
+                      Expanded(child: Text(total.toString(), textAlign: TextAlign.right, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold))),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.05),
+              borderRadius: const BorderRadius.vertical(bottom: Radius.circular(16)),
+              border: Border(top: BorderSide(color: Colors.white.withOpacity(0.1))),
+            ),
+            child: Row(
+              children: [
+                Expanded(flex: 2, child: Text('TOTAL', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 14))),
+                Expanded(child: Text(_totalIn.toString(), textAlign: TextAlign.center, style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 14))),
+                Expanded(child: Text(_totalOut.toString(), textAlign: TextAlign.center, style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold, fontSize: 14))),
+                Expanded(child: Text(((_totalIn + _totalOut) ~/ 2).toString(), textAlign: TextAlign.right, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 14))),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildHeroChart(bool isMobile) {
     int totalVisitors = (_totalIn + _totalOut) ~/ 2;
     List<LineChartBarData> chartLines = [];
@@ -736,20 +1003,49 @@ class _DashboardWebState extends State<DashboardWeb> {
                   Text(totalVisitors.toString(), style: TextStyle(color: Colors.white, fontSize: isMobile ? 48 : 72, fontWeight: FontWeight.w900, letterSpacing: -2, height: 1.0)),
                 ],
               ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('${_isFrench ? "Total Entrées" : "Total In"}: $_totalIn', style: const TextStyle(color: Color(0xFF00C6FF), fontSize: 15, fontWeight: FontWeight.w900)),
-                  const SizedBox(height: 8),
-                  Text('${_isFrench ? "Total Sorties" : "Total Out"}: $_totalOut', style: const TextStyle(color: Color(0xFFFF512F), fontSize: 15, fontWeight: FontWeight.w900)),
-                ],
+              Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // 🚀 View Toggle (Chart / Table)
+                    Container(
+                      decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.05),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: Colors.white.withOpacity(0.1))
+                      ),
+                      child: Row(
+                        children: [
+                          IconButton(
+                            icon: Icon(Icons.show_chart, color: !_isTableMode ? const Color(0xFF00C6FF) : Colors.white54, size: 20),
+                            onPressed: () => setState(() => _isTableMode = false),
+                            tooltip: _isFrench ? 'Graphique' : 'Chart',
+                          ),
+                          IconButton(
+                            icon: Icon(Icons.table_chart, color: _isTableMode ? const Color(0xFF00C6FF) : Colors.white54, size: 20),
+                            onPressed: () => setState(() => _isTableMode = true),
+                            tooltip: _isFrench ? 'Tableau' : 'Table',
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 24),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('${_isFrench ? "Total Entrées" : "Total In"}: $_totalIn', style: const TextStyle(color: Color(0xFF00C6FF), fontSize: 15, fontWeight: FontWeight.w900)),
+                        const SizedBox(height: 8),
+                        Text('${_isFrench ? "Total Sorties" : "Total Out"}: $_totalOut', style: const TextStyle(color: Color(0xFFFF512F), fontSize: 15, fontWeight: FontWeight.w900)),
+                      ],
+                    )
+                  ]
               )
             ],
           ),
           SizedBox(height: isMobile ? 30 : 50),
           SizedBox(
-            height: isMobile ? 250 : 380,
-            child: LineChart(
+            height: isMobile ? 300 : 380,
+            // 🚀 Decide what to render based on the toggle state!
+            child: _isTableMode ? _buildTableView() : LineChart(
               LineChartData(
                 minY: 0, maxY: maxTrafficY * 1.15,
                 gridData: FlGridData(show: true, drawVerticalLine: false, getDrawingHorizontalLine: (value) => FlLine(color: Colors.white.withOpacity(0.05), strokeWidth: 1, dashArray: [8, 8])),
@@ -786,16 +1082,13 @@ class _DashboardWebState extends State<DashboardWeb> {
     List<Widget> cards = [];
 
     if (!_enablePosFeatures) {
-      // ==========================================
-      // 🏢 MALL / BUILDING MODE (Pure Footfall)
-      // ==========================================
       cards = [
         _buildBentoCard(
             title: _isFrench ? 'TOTAL ENTRÉES' : 'TOTAL IN',
             value: '$_totalIn',
             unit: _isFrench ? 'PERS' : 'PAX',
             icon: Icons.login_rounded,
-            color: const Color(0xFF38EF7D), // Mint Green
+            color: const Color(0xFF38EF7D),
             isMobile: isMobile
         ),
         _buildBentoCard(
@@ -803,7 +1096,7 @@ class _DashboardWebState extends State<DashboardWeb> {
             value: '$_totalOut',
             unit: _isFrench ? 'PERS' : 'PAX',
             icon: Icons.logout_rounded,
-            color: const Color(0xFFFF512F), // Sunset Orange
+            color: const Color(0xFFFF512F),
             isMobile: isMobile
         ),
         _buildBentoCard(
@@ -811,7 +1104,7 @@ class _DashboardWebState extends State<DashboardWeb> {
             value: _peakHour,
             unit: 'TIME',
             icon: Icons.access_time_filled_rounded,
-            color: const Color(0xFF00C6FF), // Cyan
+            color: const Color(0xFF00C6FF),
             isMobile: isMobile
         ),
         _buildBentoCard(
@@ -819,14 +1112,11 @@ class _DashboardWebState extends State<DashboardWeb> {
             value: '$_occupancy',
             unit: _isFrench ? 'ACTUEL' : 'NOW',
             icon: Icons.people_alt_rounded,
-            color: const Color(0xFF8E2DE2), // Deep Purple
+            color: const Color(0xFF8E2DE2),
             isMobile: isMobile
         ),
       ];
     } else {
-      // ==========================================
-      // 🛍️ RETAIL MODE (Financials & POS)
-      // ==========================================
       int totalVisitors = (_totalIn + _totalOut) ~/ 2;
       double conversionRate = totalVisitors > 0 ? (_currentClients / totalVisitors) * 100 : 0.0;
       double avgBasket = _currentClients > 0 ? (_currentCa / _currentClients) : 0.0;
