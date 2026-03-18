@@ -10,6 +10,11 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+// 🚀 Desktop Window and Tray Managers
+import 'package:window_manager/window_manager.dart';
+import 'package:tray_manager/tray_manager.dart';
+
 import 'cloud_sync_screen.dart';
 import '../services/ftp_service.dart';
 import 'ftp_server_screen.dart';
@@ -21,6 +26,7 @@ import '../services/csv_export_service.dart';
 import 'camera_ftp_setup_screen.dart';
 import 'export_screen.dart';
 import 'developer_screen.dart';
+import 'store_profile_screen.dart'; // 🚀 FIXED: Added the missing import here!
 import 'package:webview_windows/webview_windows.dart';
 import '../services/firebase_sync_service.dart';
 
@@ -33,7 +39,7 @@ class DashboardScreen extends StatefulWidget {
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen> {
+class _DashboardScreenState extends State<DashboardScreen> with WindowListener, TrayListener {
   List<PeopleCount> _rawData = [];
   List<PeopleCount> _displayedData = [];
   Map<String, List<PeopleCount>> _perDoorData = {};
@@ -42,6 +48,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   ChartFilter _currentFilter = ChartFilter.hourly;
   DateTimeRange? _selectedDateRange;
 
+  // 🚀 Flag to toggle POS (Retail) vs Footfall (Mall) mode
+  bool _enablePosFeatures = true;
 
   void _showLinkIpDialog(String cameraName) {
     TextEditingController ipController = TextEditingController(text: _cameraIps[cameraName]);
@@ -160,6 +168,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
+
+    if (!kIsWeb) {
+      windowManager.addListener(this);
+      trayManager.addListener(this);
+      _initSystemTray();
+    }
+
     _loadLanguagePref();
     _loadWorkingHoursPref();
     _loadStoreProfile();
@@ -169,11 +184,52 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _startSecurityMonitor();
     _loadCameraIps();
 
-    // 🚀 NEW: Start the 14:00 and 22:00 background sync timer
     FirebaseSyncService.startScheduledSync(_performFirebaseSync);
   }
 
-  // 🚀 NEW: The function that gathers the data and sends it to Firebase
+  Future<void> _initSystemTray() async {
+    await trayManager.setIcon('assets/app_icon.ico');
+
+    Menu menu = Menu(
+      items: [
+        MenuItem(
+          key: 'show_app',
+          label: 'Show Dashboard',
+        ),
+        MenuItem.separator(),
+        MenuItem(
+          key: 'exit_app',
+          label: 'Exit Analytics completely',
+        ),
+      ],
+    );
+    await trayManager.setContextMenu(menu);
+  }
+
+  @override
+  void onWindowClose() async {
+    bool isPreventClose = await windowManager.isPreventClose();
+    if (isPreventClose) {
+      await windowManager.hide();
+    }
+  }
+
+  @override
+  void onTrayIconMouseDown() {
+    windowManager.show();
+    windowManager.focus();
+  }
+
+  @override
+  void onTrayMenuItemClick(MenuItem menuItem) {
+    if (menuItem.key == 'show_app') {
+      windowManager.show();
+      windowManager.focus();
+    } else if (menuItem.key == 'exit_app') {
+      windowManager.destroy();
+    }
+  }
+
   Future<void> _performFirebaseSync() async {
     if (_displayedData.isEmpty) {
       debugPrint("⚠️ No data to sync to Firebase yet.");
@@ -187,15 +243,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final now = DateTime.now();
     String dateStr = "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
 
-    // Extract POS data for today
     Map<String, dynamic>? posDataForToday = _posDatabase[dateStr];
 
-    // Push to Firebase
     await FirebaseSyncService.uploadDailySummary(
-      perDoorData: _perDoorData, // 🚀 CHANGED: Pass the map of all cameras!
+      perDoorData: _perDoorData,
       totalIn: _totalIn,
       totalOut: _totalOut,
-      posDataForToday: null,
+      posDataForToday: _enablePosFeatures ? posDataForToday : null,
     );
 
     if (mounted) {
@@ -211,6 +265,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   void dispose() {
+    if (!kIsWeb) {
+      windowManager.removeListener(this);
+      trayManager.removeListener(this);
+    }
+
     _autoRefreshTimer?.cancel();
     _securityTimer?.cancel();
     FtpService.stopServer();
@@ -384,7 +443,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
   }
 
-  // 🚀 CLEANED UP AND FIXED: Password protection dialog for the Developer section
   void _showDeveloperPasswordDialog() {
     TextEditingController passCtrl = TextEditingController();
     String errorMessage = "";
@@ -394,9 +452,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         builder: (BuildContext dialogContext) {
           return StatefulBuilder(
               builder: (context, setDialogState) {
-
-                // This function sits inside the builder, so it knows what errorMessage is!
-                // Inside _showDeveloperPasswordDialog() in dashboard_screen.dart
 
                 void verifyPassword() async {
                   if (passCtrl.text == "boitexinfodev") {
@@ -411,13 +466,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 Navigator.pop(context);
                                 _pickFolderAndLoadData();
                               },
-                              // 🚀 Pass the sync function to the Developer page!
                               onForceSync: () {
                                 if (_rawData.isNotEmpty) {
                                   _performFirebaseSync();
                                 }
                               },
-                              // 🚀 THE FIX: Pass the exact folder variable used in your dashboard!
                               currentFolderPath: _selectedFolderPath,
                             )
                         )
@@ -496,6 +549,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _storeName = prefs.getString('store_name') ?? "My Store";
       _storeLocation = prefs.getString('store_location') ?? "MAIN BRANCH";
       _storeLogoPath = prefs.getString('store_logo_path');
+
+      _enablePosFeatures = prefs.getBool('enable_pos_features') ?? true;
     });
   }
 
@@ -909,142 +964,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  void _showEditStoreProfileDialog() async {
-    final prefs = await SharedPreferences.getInstance();
-    // Load the existing Firebase ID, or default to empty
-    String currentFirebaseId = prefs.getString('firebase_store_id') ?? '';
-
-    TextEditingController nameCtrl = TextEditingController(text: _storeName); // E.g., Zara
-    TextEditingController locCtrl = TextEditingController(text: _storeLocation); // E.g., Garden City Mall
-    TextEditingController firebaseIdCtrl = TextEditingController(text: currentFirebaseId); // E.g., zara_garden_city
-
-    String? tempLogoPath = _storeLogoPath;
-
-    showDialog(
-        context: context,
-        builder: (context) {
-          return StatefulBuilder(
-              builder: (context, setDialogState) {
-                return AlertDialog(
-                  backgroundColor: _cardDark,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: BorderSide(color: Colors.white.withOpacity(0.05))),
-                  title: Text(
-                      _isFrench ? 'Paramètres du Profil' : 'Store Profile Settings',
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)
-                  ),
-                  content: SingleChildScrollView(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        GestureDetector(
-                          onTap: () async {
-                            FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.image);
-                            if (result != null && result.files.single.path != null) {
-                              setDialogState(() => tempLogoPath = result.files.single.path);
-                            }
-                          },
-                          child: Container(
-                            width: 80, height: 80,
-                            decoration: BoxDecoration(
-                              color: _bgDark,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: _accentCyan, width: 2),
-                              image: tempLogoPath != null ? DecorationImage(image: FileImage(File(tempLogoPath!)), fit: BoxFit.cover) : null,
-                            ),
-                            child: tempLogoPath == null ? Icon(Icons.add_a_photo, color: _accentCyan, size: 30) : null,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(_isFrench ? 'Appuyez pour changer le logo' : 'Tap to change logo', style: const TextStyle(color: Colors.white54, fontSize: 12)),
-                        const SizedBox(height: 24),
-
-                        TextField(
-                          controller: nameCtrl,
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                          decoration: InputDecoration(
-                            labelText: _isFrench ? 'Marque (ex: Zara)' : 'Brand (e.g. Zara)',
-                            labelStyle: const TextStyle(color: Colors.white54),
-                            filled: true, fillColor: _bgDark,
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
-                            prefixIcon: Icon(Icons.storefront, color: _accentCyan),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-
-                        TextField(
-                          controller: locCtrl,
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                          decoration: InputDecoration(
-                            labelText: _isFrench ? 'Emplacement (ex: Garden City)' : 'Location (e.g. Garden City)',
-                            labelStyle: const TextStyle(color: Colors.white54),
-                            filled: true, fillColor: _bgDark,
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
-                            prefixIcon: Icon(Icons.location_on, color: _accentMagenta),
-                          ),
-                        ),
-                        const SizedBox(height: 24),
-
-                        // --- NEW: FIREBASE CLOUD ID ---
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                              color: Colors.orangeAccent.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: Colors.orangeAccent.withOpacity(0.3))
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text("Cloud Sync Configuration", style: TextStyle(color: Colors.orangeAccent, fontWeight: FontWeight.bold, fontSize: 12)),
-                              const SizedBox(height: 8),
-                              TextField(
-                                controller: firebaseIdCtrl,
-                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                                decoration: InputDecoration(
-                                  labelText: 'Firebase Store ID (e.g. zara_garden_city)',
-                                  labelStyle: const TextStyle(color: Colors.white54, fontSize: 12),
-                                  filled: true, fillColor: _bgDark,
-                                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
-                                  prefixIcon: const Icon(Icons.cloud_sync, color: Colors.orangeAccent),
-                                ),
-                              ),
-                            ],
-                          ),
-                        )
-                      ],
-                    ),
-                  ),
-                  actions: [
-                    TextButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: Text(_isFrench ? 'ANNULER' : 'CANCEL', style: const TextStyle(color: Colors.white54))
-                    ),
-                    ElevatedButton(
-                      style: ElevatedButton.styleFrom(backgroundColor: _accentCyan, foregroundColor: Colors.black),
-                      onPressed: () async {
-                        // Save everything to SharedPreferences
-                        await prefs.setString('store_name', nameCtrl.text.trim());
-                        await prefs.setString('store_location', locCtrl.text.trim());
-                        await prefs.setString('firebase_store_id', firebaseIdCtrl.text.trim());
-                        if (tempLogoPath != null) await prefs.setString('store_logo_path', tempLogoPath!);
-
-                        setState(() {
-                          _storeName = nameCtrl.text.trim();
-                          _storeLocation = locCtrl.text.trim();
-                          _storeLogoPath = tempLogoPath;
-                        });
-                        Navigator.pop(context);
-                      },
-                      child: Text(_isFrench ? 'ENREGISTRER' : 'SAVE SETTINGS', style: const TextStyle(fontWeight: FontWeight.bold)),
-                    ),
-                  ],
-                );
-              }
-          );
-        }
-    );
-  }
-
   void _showPosEntryDialog() {
     if (_selectedDateRange == null) return;
     String dateStr = _formatDateOnly(_selectedDateRange!.end);
@@ -1382,7 +1301,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 children: [
                   _buildSidebarItem(Icons.dashboard, _isFrench ? 'Tableau de bord' : 'Dashboard', isActive: true),
 
-                  _buildSidebarItem(Icons.point_of_sale, _isFrench ? 'Saisie de Caisse' : 'POS Entry', onTap: _rawData.isNotEmpty ? _showPosEntryDialog : null),
+                  if (_enablePosFeatures)
+                    _buildSidebarItem(Icons.point_of_sale, _isFrench ? 'Saisie de Caisse' : 'POS Entry', onTap: _rawData.isNotEmpty ? _showPosEntryDialog : null),
+
                   _buildSidebarItem(Icons.download, _isFrench ? 'Exporter Rapports' : 'Export Reports', onTap: _rawData.isNotEmpty ? _showExportMenu : null),
 
                   _buildSidebarItem(
@@ -1476,7 +1397,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           _buildLanguageToggle(),
           const SizedBox(width: 32),
 
-          // 🚀 REMOVED InkWell to make this view-only for local store staff
+          // 🔒 View only - Removed GestureDetector to prevent unauthorized changes
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             child: Row(
@@ -1637,11 +1558,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
       decoration: BoxDecoration(
-        // 🚀 PRO FEATURE: AI Holographic Gradient
         gradient: LinearGradient(
           colors: [
-            const Color(0xFF4A00E0).withOpacity(0.2), // Deep Purple
-            const Color(0xFF06B6D4).withOpacity(0.1), // Cyan
+            const Color(0xFF4A00E0).withOpacity(0.2),
+            const Color(0xFF06B6D4).withOpacity(0.1),
             Colors.transparent
           ],
           begin: Alignment.topLeft,
@@ -1652,7 +1572,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
       child: Row(
         children: [
-          // 🚀 PRO FEATURE: Animated-style AI Sparkle Icon
           Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
@@ -1690,23 +1609,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     bool showPerDoor = _selectedCamera == 'All Doors' && _availableCameras.length > 2 && !_isCompareMode;
 
-    // Premium Apple-inspired color palettes
     List<List<Color>> luxuryGradients = [
-      [const Color(0xFF00C6FF), const Color(0xFF0072FF)], // Cyan to Deep Blue
-      [const Color(0xFFFF512F), const Color(0xFFDD2476)], // Sunset Orange to Pink
-      [const Color(0xFF11998E), const Color(0xFF38EF7D)], // Mint Green
-      [const Color(0xFF8E2DE2), const Color(0xFF4A00E0)], // Deep Purple
-      [const Color(0xFFFDC830), const Color(0xFFF37335)], // Warm Gold
+      [const Color(0xFF00C6FF), const Color(0xFF0072FF)],
+      [const Color(0xFFFF512F), const Color(0xFFDD2476)],
+      [const Color(0xFF11998E), const Color(0xFF38EF7D)],
+      [const Color(0xFF8E2DE2), const Color(0xFF4A00E0)],
+      [const Color(0xFFFDC830), const Color(0xFFF37335)],
     ];
 
     List<String> plottedDoors = _perDoorData.keys.toList();
 
-    // --- 1. SMART AXIS & PRO METRICS ENGINE ---
     double maxTrafficY = 1.0;
     double sumTraffic = 0;
     int dataPointCount = 0;
 
-    // Calculate the absolute max peak and the mathematical average
     void processSpotForMetrics(double value) {
       if (value > maxTrafficY) maxTrafficY = value;
       sumTraffic += value;
@@ -1733,7 +1649,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     double averageTraffic = dataPointCount > 0 ? (sumTraffic / dataPointCount) : 0;
 
-    // Dynamic Interval Calibrator
     double yInterval = 1;
     if (maxTrafficY > 1000) yInterval = 200;
     else if (maxTrafficY > 500) yInterval = 100;
@@ -1742,7 +1657,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     else if (maxTrafficY > 20) yInterval = 5;
     else if (maxTrafficY > 10) yInterval = 2;
 
-    // 🚀 Helper for the Volumetric Glass Fade
     LinearGradient buildVolumetricFade(Color baseColor) {
       return LinearGradient(
         colors: [baseColor.withOpacity(0.35), baseColor.withOpacity(0.1), Colors.transparent],
@@ -1751,7 +1665,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       );
     }
 
-    // --- 2. BUILD THE CHART LINES ---
     if (showPerDoor) {
       int colorIndex = 0;
       for (String door in plottedDoors) {
@@ -1772,7 +1685,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
           gradient: LinearGradient(colors: doorGradient), barWidth: 4, isStrokeCapRound: true,
           shadow: Shadow(color: doorGradient.first.withOpacity(0.5), blurRadius: 8, offset: const Offset(0, 4)),
           belowBarData: BarAreaData(show: true, gradient: buildVolumetricFade(doorGradient.first)),
-          // 🚀 TESLA PEAK MARKER: Show dot only on the absolute maximum value
           dotData: FlDotData(
             show: true,
             checkToShowDot: (spot, barData) => spot.y == maxTrafficY && spot.y > 0,
@@ -1821,7 +1733,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ));
     }
 
-    // --- 3. LUXURY CARD LAYOUT ---
     return Container(
       padding: const EdgeInsets.all(40),
       decoration: BoxDecoration(
@@ -1901,15 +1812,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
           const SizedBox(height: 50),
 
-          // --- 4. THE FL_CHART IMPLEMENTATION ---
           SizedBox(
             height: 380,
             child: LineChart(
               LineChartData(
                 minY: 0,
                 maxY: maxTrafficY * 1.15,
-
-                // 🚀 GOOGLE/BLOOMBERG TRENDLINE: The Average Baseline
                 extraLinesData: ExtraLinesData(
                   horizontalLines: [
                     if (averageTraffic > 0)
@@ -1928,7 +1836,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ),
                   ],
                 ),
-
                 lineTouchData: LineTouchData(
                   handleBuiltInTouches: true,
                   getTouchedSpotIndicator: (LineChartBarData barData, List<int> spotIndexes) {
@@ -2014,11 +1921,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
         Text(_isFrench ? 'ZONES ET CAMÉRAS' : 'ZONES & CAMERAS', style: const TextStyle(color: Colors.white38, fontSize: 13, fontWeight: FontWeight.w800, letterSpacing: 2.5)),
         const SizedBox(height: 16),
         SizedBox(
-          height: 55, // Sleek, thin height
+          height: 55,
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
             itemCount: _availableCameras.length,
-            physics: const BouncingScrollPhysics(), // Premium Apple scroll bounce
+            physics: const BouncingScrollPhysics(),
             itemBuilder: (context, index) {
               String cameraName = _availableCameras[index];
               bool isSelected = _selectedCamera == cameraName;
@@ -2032,15 +1939,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   margin: const EdgeInsets.only(right: 12),
                   padding: const EdgeInsets.symmetric(horizontal: 24),
                   decoration: BoxDecoration(
-                    color: isSelected ? Colors.white : _cardDark, // High contrast when selected
-                    borderRadius: BorderRadius.circular(30), // Perfect pill shape
+                    color: isSelected ? Colors.white : _cardDark,
+                    borderRadius: BorderRadius.circular(30),
                     border: Border.all(color: isSelected ? Colors.white : Colors.white.withOpacity(0.1), width: 1.5),
                     boxShadow: isSelected ? [BoxShadow(color: Colors.white.withOpacity(0.2), blurRadius: 15, offset: const Offset(0, 4))] : [],
                   ),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      // Pulsing Live Dot for individual cameras
                       if (cameraName != 'All Doors') ...[
                         Container(
                             width: 8, height: 8,
@@ -2067,50 +1973,92 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  // 🚀 SMART BENTO GRID: Switches based on _enablePosFeatures
   Widget _buildBentoGrid(bool isDesktop) {
-    int totalVisitors = (_totalIn + _totalOut) ~/ 2;
-    double conversionRate = totalVisitors > 0 ? (_currentClients / totalVisitors) * 100 : 0.0;
-    double avgBasket = _currentClients > 0 ? (_currentCa / _currentClients) : 0.0;
-    double upt = _currentClients > 0 ? (_currentArticles / _currentClients) : 0.0;
+    List<Widget> gridItems = [];
 
-    double compareConv = _compareTotalVisitors > 0 ? (_compareClients / _compareTotalVisitors) * 100 : 0.0;
-    double compareBasket = _compareClients > 0 ? (_compareCa / _compareClients) : 0.0;
-    double compareUpt = _compareClients > 0 ? (_compareArticles / _compareClients) : 0.0;
+    if (!_enablePosFeatures) {
+      // ==========================================
+      // 🏢 MALL / BUILDING MODE (Pure Footfall)
+      // ==========================================
+      gridItems = [
+        _buildBentoCard(
+          title: _isFrench ? 'TOTAL ENTRÉES' : 'TOTAL IN',
+          value: '$_totalIn',
+          unit: _isFrench ? 'PERS' : 'PAX',
+          icon: Icons.login_rounded,
+          color: const Color(0xFF38EF7D), // Mint Green
+        ),
+        _buildBentoCard(
+          title: _isFrench ? 'TOTAL SORTIES' : 'TOTAL OUT',
+          value: '$_totalOut',
+          unit: _isFrench ? 'PERS' : 'PAX',
+          icon: Icons.logout_rounded,
+          color: const Color(0xFFFF512F), // Sunset Orange
+        ),
+        _buildBentoCard(
+          title: _isFrench ? 'HEURE DE POINTE' : 'PEAK HOUR',
+          value: _peakHour,
+          unit: 'TIME',
+          icon: Icons.access_time_filled_rounded,
+          color: const Color(0xFF00C6FF), // Cyan
+        ),
+        _buildBentoCard(
+          title: _isFrench ? 'OCCUPATION' : 'OCCUPANCY',
+          value: '$_occupancy',
+          unit: _isFrench ? 'ACTUEL' : 'NOW',
+          icon: Icons.people_alt_rounded,
+          color: const Color(0xFF8E2DE2), // Deep Purple
+        ),
+      ];
+    } else {
+      // ==========================================
+      // 🛍️ RETAIL MODE (Financials & POS)
+      // ==========================================
+      int totalVisitors = (_totalIn + _totalOut) ~/ 2;
+      double conversionRate = totalVisitors > 0 ? (_currentClients / totalVisitors) * 100 : 0.0;
+      double avgBasket = _currentClients > 0 ? (_currentCa / _currentClients) : 0.0;
+      double upt = _currentClients > 0 ? (_currentArticles / _currentClients) : 0.0;
 
-    List<Widget> gridItems = [
-      _buildBentoCard(
-          title: _isFrench ? 'CHIFFRE D\'AFFAIRES' : 'REVENUE',
-          value: '${_currentCa.toStringAsFixed(0)}',
-          unit: 'DZD',
-          icon: Icons.account_balance_wallet_rounded,
-          color: const Color(0xFF38EF7D), // Premium Mint Green
-          trendWidget: _buildTrendBadge(_currentCa, _compareCa)
-      ),
-      _buildBentoCard(
-          title: _isFrench ? 'TAUX DE CONV.' : 'CONV. RATE',
-          value: conversionRate.toStringAsFixed(1),
-          unit: '%',
-          icon: Icons.track_changes_rounded,
-          color: const Color(0xFFFF512F), // Premium Sunset Orange
-          trendWidget: _buildTrendBadge(conversionRate, compareConv)
-      ),
-      _buildBentoCard(
-          title: _isFrench ? 'PANIER MOYEN' : 'AVG BASKET',
-          value: avgBasket.toStringAsFixed(0),
-          unit: 'DZD',
-          icon: Icons.shopping_bag_rounded,
-          color: const Color(0xFF00C6FF), // Premium Cyan
-          trendWidget: _buildTrendBadge(avgBasket, compareBasket)
-      ),
-      _buildBentoCard(
-          title: _isFrench ? 'INDICE DE VENTE' : 'U.P.T',
-          value: upt.toStringAsFixed(2),
-          unit: 'ART',
-          icon: Icons.layers_rounded,
-          color: const Color(0xFF8E2DE2), // Premium Deep Purple
-          trendWidget: _buildTrendBadge(upt, compareUpt)
-      ),
-    ];
+      double compareConv = _compareTotalVisitors > 0 ? (_compareClients / _compareTotalVisitors) * 100 : 0.0;
+      double compareBasket = _compareClients > 0 ? (_compareCa / _compareClients) : 0.0;
+      double compareUpt = _compareClients > 0 ? (_compareArticles / _compareClients) : 0.0;
+
+      gridItems = [
+        _buildBentoCard(
+            title: _isFrench ? 'CHIFFRE D\'AFFAIRES' : 'REVENUE',
+            value: '${_currentCa.toStringAsFixed(0)}',
+            unit: 'DZD',
+            icon: Icons.account_balance_wallet_rounded,
+            color: const Color(0xFF38EF7D),
+            trendWidget: _buildTrendBadge(_currentCa, _compareCa)
+        ),
+        _buildBentoCard(
+            title: _isFrench ? 'TAUX DE CONV.' : 'CONV. RATE',
+            value: conversionRate.toStringAsFixed(1),
+            unit: '%',
+            icon: Icons.track_changes_rounded,
+            color: const Color(0xFFFF512F),
+            trendWidget: _buildTrendBadge(conversionRate, compareConv)
+        ),
+        _buildBentoCard(
+            title: _isFrench ? 'PANIER MOYEN' : 'AVG BASKET',
+            value: avgBasket.toStringAsFixed(0),
+            unit: 'DZD',
+            icon: Icons.shopping_bag_rounded,
+            color: const Color(0xFF00C6FF),
+            trendWidget: _buildTrendBadge(avgBasket, compareBasket)
+        ),
+        _buildBentoCard(
+            title: _isFrench ? 'INDICE DE VENTE' : 'U.P.T',
+            value: upt.toStringAsFixed(2),
+            unit: 'ART',
+            icon: Icons.layers_rounded,
+            color: const Color(0xFF8E2DE2),
+            trendWidget: _buildTrendBadge(upt, compareUpt)
+        ),
+      ];
+    }
 
     if (isDesktop) {
       return Row(
@@ -2134,11 +2082,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _buildBentoCard({required String title, required String value, required String unit, required IconData icon, required Color color, Widget? trendWidget}) {
     return Container(
-      height: 220, // Slightly taller for a majestic feel
+      height: 220,
       padding: const EdgeInsets.all(28),
       decoration: BoxDecoration(
         color: _cardDark,
-        // 🚀 PRO FEATURE: Radial Ambient Glow inside the card
         gradient: RadialGradient(
           colors: [color.withOpacity(0.15), _cardDark.withOpacity(0.0)],
           center: Alignment.topRight,
@@ -2148,7 +2095,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         border: Border.all(color: Colors.white.withOpacity(0.06), width: 1.5),
         boxShadow: [
           BoxShadow(color: Colors.black.withOpacity(0.3), blurRadius: 24, offset: const Offset(0, 12)),
-          BoxShadow(color: color.withOpacity(0.04), blurRadius: 40, spreadRadius: 5), // Ambient colored shadow
+          BoxShadow(color: color.withOpacity(0.04), blurRadius: 40, spreadRadius: 5),
         ],
       ),
       child: Column(
@@ -2159,7 +2106,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 🚀 PRO FEATURE: Frosted Glass Icon Container
               Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
@@ -2194,8 +2140,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 }
+
 // =========================================================================
-// 🚀 THE NEW SMART IP CAMERA STREAM ENGINE (AUTO-DETECT 2D/3D)
+// THE NEW SMART IP CAMERA STREAM ENGINE (AUTO-DETECT 2D/3D)
 // =========================================================================
 enum CameraType { unknown, model1_3d, model2_2d, error }
 
@@ -2208,15 +2155,11 @@ class CameraStreamWidget extends StatefulWidget {
 }
 
 class _CameraStreamWidgetState extends State<CameraStreamWidget> {
-  // Model 1 (3D) Variables
   Timer? _pollingTimer;
   Uint8List? _lastFrame;
-
-  // Model 2 (2D) Variables
   WebviewController? _webviewController;
   bool _isWebviewInitialized = false;
 
-  // Global State
   CameraType _cameraType = CameraType.unknown;
   String _status = "Detecting Camera Model...";
   bool _isError = false;
@@ -2255,16 +2198,13 @@ class _CameraStreamWidgetState extends State<CameraStreamWidget> {
     super.dispose();
   }
 
-  // --- 🧠 SMART AUTO-DETECTION ENGINE ---
   Future<void> _detectAndStart() async {
     if (_isDisposed) return;
 
-    // Clean user input (e.g. "http://192.168.1.203/control/" becomes "192.168.1.203")
     String baseIp = widget.ipAddress.trim().replaceAll('http://', '').replaceAll('https://', '').split('/').first;
 
     setState(() => _status = "Checking 3D Model API...");
 
-    // 1. Try 3D Model API
     if (await _testModel1(baseIp)) {
       if (_isDisposed) return;
       setState(() {
@@ -2277,7 +2217,6 @@ class _CameraStreamWidgetState extends State<CameraStreamWidget> {
 
     setState(() => _status = "Checking 2D Model API...");
 
-    // 2. Try 2D Model URL
     if (await _testModel2(baseIp)) {
       if (_isDisposed) return;
       setState(() {
@@ -2288,7 +2227,6 @@ class _CameraStreamWidgetState extends State<CameraStreamWidget> {
       return;
     }
 
-    // 3. Fail gracefully
     if (!_isDisposed) {
       setState(() {
         _isError = true;
@@ -2325,7 +2263,6 @@ class _CameraStreamWidgetState extends State<CameraStreamWidget> {
     }
   }
 
-  // --- 📸 MODEL 1 (3D) LOGIC ---
   void _startModel1Polling(String baseIp) {
     _fetchModel1Frame(baseIp);
     _pollingTimer = Timer.periodic(const Duration(milliseconds: 1500), (_) {
@@ -2354,7 +2291,6 @@ class _CameraStreamWidgetState extends State<CameraStreamWidget> {
     }
   }
 
-  // --- 🎥 MODEL 2 (2D) LOGIC (WEBVIEW + JS INJECTION) ---
   Future<void> _startModel2Webview(String baseIp) async {
     _webviewController = WebviewController();
     try {
@@ -2364,9 +2300,6 @@ class _CameraStreamWidgetState extends State<CameraStreamWidget> {
       await _webviewController!.loadUrl('http://$baseIp/control/countingsource/');
       setState(() => _isWebviewInitialized = true);
 
-      // 🚀 PRO TRICK: Inject JS periodically. This ensures that even if the camera's
-      // internal scripts draw the canvas slightly late, we catch it, hide everything
-      // else, and force the canvas to fill our exact dashboard window.
       Timer.periodic(const Duration(seconds: 1), (timer) {
         if (_isDisposed || _webviewController == null) {
           timer.cancel();
@@ -2376,7 +2309,6 @@ class _CameraStreamWidgetState extends State<CameraStreamWidget> {
           _webviewController!.executeScript("""
             var cvs = document.getElementById('id_ImagePreview');
             if(cvs && !document.getElementById('boitex_custom_container')) {
-               // 1. Create a pitch black container
                var container = document.createElement('div');
                container.id = 'boitex_custom_container';
                container.style.position = 'fixed';
@@ -2390,16 +2322,13 @@ class _CameraStreamWidgetState extends State<CameraStreamWidget> {
                container.style.justifyContent = 'center';
                container.style.alignItems = 'center';
                
-               // 2. Hide scrollbars on the main body
                document.body.style.overflow = 'hidden';
                
-               // 3. Steal the canvas and maximize it
                cvs.style.display = 'block';
                cvs.style.width = '100%';
                cvs.style.height = '100%';
                cvs.style.objectFit = 'contain';
                
-               // 4. Attach to screen
                container.appendChild(cvs);
                document.body.appendChild(container);
             }
@@ -2414,7 +2343,6 @@ class _CameraStreamWidgetState extends State<CameraStreamWidget> {
 
   @override
   Widget build(BuildContext context) {
-    // 1. Model 1 View (Image Polling)
     if (_cameraType == CameraType.model1_3d && _lastFrame != null) {
       return Stack(
         fit: StackFit.expand,
@@ -2425,7 +2353,6 @@ class _CameraStreamWidgetState extends State<CameraStreamWidget> {
       );
     }
 
-    // 2. Model 2 View (Webview Canvas)
     if (_cameraType == CameraType.model2_2d && _isWebviewInitialized) {
       return Stack(
         fit: StackFit.expand,
@@ -2436,7 +2363,6 @@ class _CameraStreamWidgetState extends State<CameraStreamWidget> {
       );
     }
 
-    // 3. Loading / Detecting / Error State
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,

@@ -25,6 +25,8 @@ class CsvExportService {
     required double conversionRate,
     required double avgBasket,
     required double upt,
+    // 🚀 NEW: MALL VS RETAIL MODE FLAG
+    required bool enablePosFeatures,
   }) async {
     try {
       StringBuffer csv = StringBuffer();
@@ -55,11 +57,16 @@ class CsvExportService {
       csv.writeln("Traffic, Total Exits (OUT), $totalOut");
       csv.writeln("Traffic, Net Visitors, $totalVisitors");
       csv.writeln("Traffic, Peak Hour, \"$peakHour\"");
-      csv.writeln("Sales, Total Revenue, \"${revenue.toStringAsFixed(2)} DZD\"");
-      csv.writeln("Sales, Total Clients, $clients");
-      csv.writeln("Sales, Conversion Rate, \"${conversionRate.toStringAsFixed(2)} %\"");
-      csv.writeln("Sales, Average Basket, \"${avgBasket.toStringAsFixed(2)} DZD\"");
-      csv.writeln("Sales, Units Per Transaction (UPT), ${upt.toStringAsFixed(2)}");
+
+      // 🚀 Conditionally add POS rows only if Retail Mode is enabled
+      if (enablePosFeatures) {
+        csv.writeln("Sales, Total Revenue, \"${revenue.toStringAsFixed(2)} DZD\"");
+        csv.writeln("Sales, Total Clients, $clients");
+        csv.writeln("Sales, Conversion Rate, \"${conversionRate.toStringAsFixed(2)} %\"");
+        csv.writeln("Sales, Average Basket, \"${avgBasket.toStringAsFixed(2)} DZD\"");
+        csv.writeln("Sales, Units Per Transaction (UPT), ${upt.toStringAsFixed(2)}");
+      }
+
       csv.writeln("");
 
       // 🚀 4. DETAILED DATA LOG

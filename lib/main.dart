@@ -1,9 +1,13 @@
 // lib/main.dart
 
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart'; // 🚀 NEW: This gives us kIsWeb!
+import 'package:flutter/foundation.dart'; // 🚀 Gives us kIsWeb!
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'l10n/app_localizations.dart';
+
+// --- Desktop Background & Tray Imports ---
+import 'package:window_manager/window_manager.dart';
+import 'package:tray_manager/tray_manager.dart';
 
 // --- Firebase imports ---
 import 'package:firebase_core/firebase_core.dart';
@@ -11,7 +15,7 @@ import 'firebase_options.dart';
 
 // --- Screen imports ---
 import 'screens/splash_screen.dart';
-import 'screens/login_screen.dart'; // 🚀 NEW: Import the login screen
+import 'screens/login_screen.dart';
 
 // A global navigator key so background services can show emergency popups anywhere!
 final GlobalKey<NavigatorState> globalNavigatorKey = GlobalKey<NavigatorState>();
@@ -25,6 +29,23 @@ void main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
+  // 🚀 NEW: Initialize the window manager for Desktop apps
+  if (!kIsWeb) {
+    await windowManager.ensureInitialized();
+    WindowOptions windowOptions = const WindowOptions(
+      size: Size(1024, 768), // Default startup size
+      center: true,
+      title: 'BoitexInfo Analytics',
+    );
+
+    windowManager.waitUntilReadyToShow(windowOptions, () async {
+      await windowManager.show();
+      await windowManager.focus();
+      // Crucial step: tell Windows we want to handle the close event ourselves!
+      await windowManager.setPreventClose(true);
+    });
+  }
+
   // 🚀 SMART ROUTING: Decide which screen to show first based on the platform
   Widget firstScreen;
   if (kIsWeb) {
@@ -36,15 +57,93 @@ void main() async {
   runApp(MyApp(initialScreen: firstScreen));
 }
 
-class MyApp extends StatelessWidget {
-  final Widget initialScreen; // 🚀 NEW: Accept the smartly selected screen
+// 🚀 Changed from StatelessWidget to StatefulWidget to handle Window & Tray events
+class MyApp extends StatefulWidget {
+  final Widget initialScreen;
 
   const MyApp({super.key, required this.initialScreen});
 
   @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> with WindowListener, TrayListener {
+
+  @override
+  void initState() {
+    super.initState();
+    // Add listeners ONLY if we are running on desktop/mobile (Not Web)
+    if (!kIsWeb) {
+      windowManager.addListener(this);
+      trayManager.addListener(this);
+      _initSystemTray();
+    }
+  }
+
+  @override
+  void dispose() {
+    if (!kIsWeb) {
+      windowManager.removeListener(this);
+      trayManager.removeListener(this);
+    }
+    super.dispose();
+  }
+
+  // --- Setup the System Tray Icon & Menu ---
+  Future<void> _initSystemTray() async {
+    // We use the app_icon.ico that already exists in your windows resources!
+    await trayManager.setIcon('windows/runner/resources/app_icon.ico');
+
+    Menu menu = Menu(
+      items: [
+        MenuItem(
+          key: 'show_app',
+          label: 'Show Dashboard',
+        ),
+        MenuItem.separator(),
+        MenuItem(
+          key: 'exit_app',
+          label: 'Exit Analytics completely',
+        ),
+      ],
+    );
+    await trayManager.setContextMenu(menu);
+  }
+
+  // --- Handle the 'X' Button Click ---
+  @override
+  void onWindowClose() async {
+    bool isPreventClose = await windowManager.isPreventClose();
+    if (isPreventClose) {
+      // 🚀 Hide the window instead of killing the app!
+      // Your FirebaseSyncService will keep running smoothly in the background.
+      await windowManager.hide();
+    }
+  }
+
+  // --- Handle System Tray Clicks ---
+  @override
+  void onTrayIconMouseDown() {
+    // Left click on the tray icon shows the app again
+    windowManager.show();
+    windowManager.focus();
+  }
+
+  @override
+  void onTrayMenuItemClick(MenuItem menuItem) {
+    if (menuItem.key == 'show_app') {
+      windowManager.show();
+      windowManager.focus();
+    } else if (menuItem.key == 'exit_app') {
+      // If the user deliberately selects exit, we terminate the app completely.
+      windowManager.destroy();
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      navigatorKey: globalNavigatorKey, // Attach the global key here!
+      navigatorKey: globalNavigatorKey,
       title: 'BoitexInfo Analytics',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
@@ -66,8 +165,7 @@ class MyApp extends StatelessWidget {
       ],
       // ---------------------------------
 
-      // 🚀 Use the smartly selected screen instead of a hardcoded one
-      home: initialScreen,
+      home: widget.initialScreen,
     );
   }
 }

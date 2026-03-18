@@ -7,7 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'login_screen.dart';
-import 'export_screen.dart'; // 🚀 NEW: Import the export screen
+import 'export_screen.dart';
 import '../models/people_count.dart';
 import '../core/data_aggregator.dart';
 
@@ -32,19 +32,23 @@ class _DashboardWebState extends State<DashboardWeb> {
   int _workingMinuteStart = 0;
   int _workingMinuteEnd = 1439;
 
-  // 🚀 Camera Variables
+  // 🚀 Flag to toggle POS (Retail) vs Footfall (Mall) mode
+  // This is now driven dynamically by the selected store's configuration in Firebase!
+  bool _enablePosFeatures = true;
+
+  // Camera Variables
   List<String> _availableCameras = ['All Doors'];
   String _selectedCamera = 'All Doors';
 
   int _totalIn = 0;
   int _totalOut = 0;
+  int _occupancy = 0;
   String _peakHour = "--:--";
 
   double _currentCa = 0;
   int _currentClients = 0;
   int _currentArticles = 0;
 
-  // 🚀 NEW: A map to hold daily POS data for the Export Screen
   Map<String, Map<String, num>> _posDatabase = {};
 
   String _loggedInUserName = "Loading...";
@@ -144,10 +148,20 @@ class _DashboardWebState extends State<DashboardWeb> {
 
       List<Map<String, dynamic>> stores = [];
       for (var doc in storeSnapshot.docs) {
+        // 🚀 SMART CLOUD CHECK: Does this store have POS enabled in Firebase?
+        bool enablePos = true;
+        if (doc.data() is Map<String, dynamic>) {
+          var data = doc.data() as Map<String, dynamic>;
+          if (data.containsKey('enable_pos_features')) {
+            enablePos = data['enable_pos_features'];
+          }
+        }
+
         stores.add({
           'id': doc.id,
           'brand': doc.data().toString().contains('brand') ? doc.get('brand') : 'Unknown',
           'location': doc.data().toString().contains('location') ? doc.get('location') : doc.id,
+          'enable_pos_features': enablePos, // 🚀 Save the mode to the list!
         });
       }
 
@@ -157,6 +171,8 @@ class _DashboardWebState extends State<DashboardWeb> {
           _selectedStoreId = stores.first['id'];
           _storeName = stores.first['brand'];
           _storeLocation = stores.first['location'];
+          // 🚀 Apply the mode immediately upon load!
+          _enablePosFeatures = stores.first['enable_pos_features'];
         });
         await _fetchCloudDataForDateRange();
       } else {
@@ -181,7 +197,7 @@ class _DashboardWebState extends State<DashboardWeb> {
 
       List<PeopleCount> loadedData = [];
       _currentCa = 0; _currentClients = 0; _currentArticles = 0;
-      _posDatabase.clear(); // 🚀 NEW: Clear previous POS data
+      _posDatabase.clear();
 
       for (DateTime d = start; d.isBefore(end.add(const Duration(days: 1))); d = d.add(const Duration(days: 1))) {
         String dateKey = "${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
@@ -229,7 +245,6 @@ class _DashboardWebState extends State<DashboardWeb> {
             });
           }
 
-          // 🚀 FIXED: Safely cast Firebase numbers to avoid crashes AND map them for ExportScreen
           if (data.containsKey('pos')) {
             double dailyCa = ((data['pos']['ca'] ?? 0) as num).toDouble();
             int dailyClients = ((data['pos']['clients'] ?? 0) as num).toInt();
@@ -239,7 +254,6 @@ class _DashboardWebState extends State<DashboardWeb> {
             _currentClients += dailyClients;
             _currentArticles += dailyArticles;
 
-            // Save this exact date's POS data into our map
             _posDatabase[dateKey] = {
               'ca': dailyCa,
               'clients': dailyClients,
@@ -261,7 +275,6 @@ class _DashboardWebState extends State<DashboardWeb> {
     }
   }
 
-  // 🚀 NEW: Helper to fetch data strictly for the Export Screen
   Future<Map<String, dynamic>> _fetchDataForExport(DateTimeRange range) async {
     List<PeopleCount> loadedData = [];
     Map<String, Map<String, num>> loadedPos = {};
@@ -317,7 +330,6 @@ class _DashboardWebState extends State<DashboardWeb> {
 
   void _applyFilter() {
     setState(() {
-      // 🚀 FIXED: Auto-switch between Hourly and Daily views depending on selected dates
       if (_selectedDateRange != null && _selectedDateRange!.end.difference(_selectedDateRange!.start).inDays > 0) {
         _currentFilter = ChartFilter.daily;
       } else {
@@ -368,6 +380,9 @@ class _DashboardWebState extends State<DashboardWeb> {
           _peakHour = item.time;
         }
       }
+
+      _occupancy = _totalIn - _totalOut;
+      if (_occupancy < 0) _occupancy = 0;
     });
   }
 
@@ -406,13 +421,11 @@ class _DashboardWebState extends State<DashboardWeb> {
   String _getFormattedDateString() {
     if (_selectedDateRange == null) return _isFrench ? "De tout temps" : "All Time";
 
-    // Full names for single days
     List<String> daysEn = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
     List<String> daysFr = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
     List<String> monthsEn = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
     List<String> monthsFr = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
 
-    // Short names for date ranges
     List<String> shortDaysEn = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     List<String> shortDaysFr = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
     List<String> shortMonthsEn = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -425,14 +438,12 @@ class _DashboardWebState extends State<DashboardWeb> {
 
     DateTime start = _selectedDateRange!.start, end = _selectedDateRange!.end;
 
-    // If it's a single day, show the full day of the week and full month name
     if (start.isAtSameMomentAs(end) || end.difference(start).inDays == 0) {
       return _isFrench
           ? "${days[start.weekday - 1]}, ${start.day} ${months[start.month - 1]} ${start.year}"
           : "${days[start.weekday - 1]}, ${months[start.month - 1]} ${start.day}, ${start.year}";
     }
 
-    // For a range of days, use the shorter format to save space
     return _isFrench
         ? "${shortDays[start.weekday - 1]} ${start.day} ${shortMonths[start.month - 1]} - ${shortDays[end.weekday - 1]} ${end.day} ${shortMonths[end.month - 1]}"
         : "${shortDays[start.weekday - 1]}, ${shortMonths[start.month - 1]} ${start.day} - ${shortDays[end.weekday - 1]}, ${shortMonths[end.month - 1]} ${end.day}";
@@ -466,6 +477,8 @@ class _DashboardWebState extends State<DashboardWeb> {
                     _selectedStoreId = store['id'];
                     _storeName = store['brand'];
                     _storeLocation = store['location'];
+                    // 🚀 Update the dashboard mode instantly when switching stores!
+                    _enablePosFeatures = store['enable_pos_features'];
                   });
                   Navigator.pop(context);
                   _fetchCloudDataForDateRange();
@@ -490,7 +503,6 @@ class _DashboardWebState extends State<DashboardWeb> {
           workingMinuteEnd: _workingMinuteEnd,
           posDatabase: _posDatabase,
           onFetchWebData: _fetchDataForExport,
-          // 🚀 ADD THESE TWO LINES:
           storeName: _storeName,
           storeLocation: _storeLocation,
         ),
@@ -564,7 +576,6 @@ class _DashboardWebState extends State<DashboardWeb> {
     );
   }
 
-  // 🚀 RESPONSIVE: Simplified AppBar just for mobile
   PreferredSizeWidget _buildMobileAppBar() {
     return AppBar(
       backgroundColor: _bgDark,
@@ -604,7 +615,6 @@ class _DashboardWebState extends State<DashboardWeb> {
           ),
           const Spacer(),
 
-          // 🚀 NEW: Export Button nicely integrated into Top AppBar for Desktop
           ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
               backgroundColor: _accentCyan.withOpacity(0.15),
@@ -685,7 +695,6 @@ class _DashboardWebState extends State<DashboardWeb> {
     );
   }
 
-  // 🚀 RESPONSIVE: Pass isMobile to handle fonts and padding
   Widget _buildHeroChart(bool isMobile) {
     int totalVisitors = (_totalIn + _totalOut) ~/ 2;
     List<LineChartBarData> chartLines = [];
@@ -714,7 +723,6 @@ class _DashboardWebState extends State<DashboardWeb> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // 🚀 RESPONSIVE: Wrap instead of Row to prevent overflow on small phones
           Wrap(
             alignment: WrapAlignment.spaceBetween,
             crossAxisAlignment: WrapCrossAlignment.end,
@@ -749,15 +757,13 @@ class _DashboardWebState extends State<DashboardWeb> {
                   rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
                   topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
                   leftTitles: AxisTitles(sideTitles: SideTitles(showTitles: true, reservedSize: isMobile ? 35 : 50, getTitlesWidget: (value, meta) => Text(value.toInt().toString(), style: const TextStyle(color: Colors.white38, fontSize: 12)))),
-
-                  // 🚀 FIXED: Dynamic X-Axis labels! Shows Dates for multi-day views, Hours for single-day views.
                   bottomTitles: AxisTitles(sideTitles: SideTitles(showTitles: true, reservedSize: 40, getTitlesWidget: (value, meta) {
                     int index = value.toInt();
                     if (index >= 0 && index < _displayedData.length) {
                       var item = _displayedData[index];
                       String label = _currentFilter == ChartFilter.daily
-                          ? item.date.substring(0, 5) // Display "DD/MM"
-                          : item.time.split(':')[0];  // Display "14", "15", etc.
+                          ? item.date.substring(0, 5)
+                          : item.time.split(':')[0];
 
                       return Padding(
                           padding: const EdgeInsets.only(top: 12.0),
@@ -776,19 +782,63 @@ class _DashboardWebState extends State<DashboardWeb> {
     );
   }
 
-  // 🚀 RESPONSIVE: Switch between Column and Row
   Widget _buildBentoGrid(bool isMobile) {
-    int totalVisitors = (_totalIn + _totalOut) ~/ 2;
-    double conversionRate = totalVisitors > 0 ? (_currentClients / totalVisitors) * 100 : 0.0;
-    double avgBasket = _currentClients > 0 ? (_currentCa / _currentClients) : 0.0;
-    double upt = _currentClients > 0 ? (_currentArticles / _currentClients) : 0.0;
+    List<Widget> cards = [];
 
-    List<Widget> cards = [
-      _buildBentoCard(title: _isFrench ? "CHIFFRE D'AFFAIRES" : 'REVENUE', value: _currentCa.toStringAsFixed(0), unit: 'DZD', icon: Icons.account_balance_wallet_rounded, color: const Color(0xFF38EF7D), isMobile: isMobile),
-      _buildBentoCard(title: _isFrench ? 'TAUX DE CONV.' : 'CONV. RATE', value: conversionRate.toStringAsFixed(1), unit: '%', icon: Icons.track_changes_rounded, color: const Color(0xFFFF512F), isMobile: isMobile),
-      _buildBentoCard(title: _isFrench ? 'PANIER MOYEN' : 'AVG BASKET', value: avgBasket.toStringAsFixed(0), unit: 'DZD', icon: Icons.shopping_bag_rounded, color: const Color(0xFF00C6FF), isMobile: isMobile),
-      _buildBentoCard(title: _isFrench ? 'INDICE DE VENTE' : 'U.P.T', value: upt.toStringAsFixed(2), unit: 'ART', icon: Icons.layers_rounded, color: const Color(0xFF8E2DE2), isMobile: isMobile),
-    ];
+    if (!_enablePosFeatures) {
+      // ==========================================
+      // 🏢 MALL / BUILDING MODE (Pure Footfall)
+      // ==========================================
+      cards = [
+        _buildBentoCard(
+            title: _isFrench ? 'TOTAL ENTRÉES' : 'TOTAL IN',
+            value: '$_totalIn',
+            unit: _isFrench ? 'PERS' : 'PAX',
+            icon: Icons.login_rounded,
+            color: const Color(0xFF38EF7D), // Mint Green
+            isMobile: isMobile
+        ),
+        _buildBentoCard(
+            title: _isFrench ? 'TOTAL SORTIES' : 'TOTAL OUT',
+            value: '$_totalOut',
+            unit: _isFrench ? 'PERS' : 'PAX',
+            icon: Icons.logout_rounded,
+            color: const Color(0xFFFF512F), // Sunset Orange
+            isMobile: isMobile
+        ),
+        _buildBentoCard(
+            title: _isFrench ? 'HEURE DE POINTE' : 'PEAK HOUR',
+            value: _peakHour,
+            unit: 'TIME',
+            icon: Icons.access_time_filled_rounded,
+            color: const Color(0xFF00C6FF), // Cyan
+            isMobile: isMobile
+        ),
+        _buildBentoCard(
+            title: _isFrench ? 'OCCUPATION' : 'OCCUPANCY',
+            value: '$_occupancy',
+            unit: _isFrench ? 'ACTUEL' : 'NOW',
+            icon: Icons.people_alt_rounded,
+            color: const Color(0xFF8E2DE2), // Deep Purple
+            isMobile: isMobile
+        ),
+      ];
+    } else {
+      // ==========================================
+      // 🛍️ RETAIL MODE (Financials & POS)
+      // ==========================================
+      int totalVisitors = (_totalIn + _totalOut) ~/ 2;
+      double conversionRate = totalVisitors > 0 ? (_currentClients / totalVisitors) * 100 : 0.0;
+      double avgBasket = _currentClients > 0 ? (_currentCa / _currentClients) : 0.0;
+      double upt = _currentClients > 0 ? (_currentArticles / _currentClients) : 0.0;
+
+      cards = [
+        _buildBentoCard(title: _isFrench ? "CHIFFRE D'AFFAIRES" : 'REVENUE', value: _currentCa.toStringAsFixed(0), unit: 'DZD', icon: Icons.account_balance_wallet_rounded, color: const Color(0xFF38EF7D), isMobile: isMobile),
+        _buildBentoCard(title: _isFrench ? 'TAUX DE CONV.' : 'CONV. RATE', value: conversionRate.toStringAsFixed(1), unit: '%', icon: Icons.track_changes_rounded, color: const Color(0xFFFF512F), isMobile: isMobile),
+        _buildBentoCard(title: _isFrench ? 'PANIER MOYEN' : 'AVG BASKET', value: avgBasket.toStringAsFixed(0), unit: 'DZD', icon: Icons.shopping_bag_rounded, color: const Color(0xFF00C6FF), isMobile: isMobile),
+        _buildBentoCard(title: _isFrench ? 'INDICE DE VENTE' : 'U.P.T', value: upt.toStringAsFixed(2), unit: 'ART', icon: Icons.layers_rounded, color: const Color(0xFF8E2DE2), isMobile: isMobile),
+      ];
+    }
 
     if (isMobile) {
       return Column(
@@ -810,7 +860,7 @@ class _DashboardWebState extends State<DashboardWeb> {
     return Container(
       height: isMobile ? 180 : 220,
       padding: EdgeInsets.all(isMobile ? 20 : 28),
-      width: isMobile ? double.infinity : null, // Stretch full width on mobile
+      width: isMobile ? double.infinity : null,
       decoration: BoxDecoration(color: _cardDark, borderRadius: BorderRadius.circular(isMobile ? 20 : 32), border: Border.all(color: Colors.white.withOpacity(0.06), width: 1.5)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -835,7 +885,6 @@ class _DashboardWebState extends State<DashboardWeb> {
     );
   }
 
-  // 🚀 RESPONSIVE: Added isMobile flag to hide width constraints when in a Drawer
   Widget _buildSidebar({bool isMobile = false}) {
     return Container(
       width: isMobile ? null : 260,
@@ -845,12 +894,11 @@ class _DashboardWebState extends State<DashboardWeb> {
           children: [
             const SizedBox(height: 40),
 
-            // 🚀 NEW: Replaced the Cloud icon with your large logo
             Image.asset(
               'assets/boitex_logo.png',
-              width: 180, // Made it nice and big! Adjust if needed.
-              height: 100, // Provides plenty of space
-              fit: BoxFit.contain, // Ensures the logo doesn't get stretched or cropped
+              width: 180,
+              height: 100,
+              fit: BoxFit.contain,
             ),
 
             const SizedBox(height: 16),
@@ -884,25 +932,23 @@ class _DashboardWebState extends State<DashboardWeb> {
             ),
             const SizedBox(height: 20),
 
-            // Add Store selector explicitly to Sidebar on Mobile (Since Top AppBar is small)
             if (isMobile && _userStores.isNotEmpty)
               ListTile(
                 leading: Icon(Icons.store, color: _accentCyan),
                 title: Text(_isFrench ? 'Changer de Magasin' : 'Switch Store', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                 onTap: () {
-                  Navigator.pop(context); // Close Drawer
+                  Navigator.pop(context);
                   _showStoreSelectorDialog();
                 },
               ),
 
             ListTile(leading: Icon(Icons.dashboard, color: _accentCyan), title: Text(_isFrench ? 'Tableau de bord' : 'Dashboard', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold))),
 
-            // 🚀 NEW: Hooked up the sidebar button to launch the Export Screen!
             ListTile(
               leading: const Icon(Icons.download, color: Colors.white),
               title: Text(_isFrench ? 'Exporter Rapports' : 'Export Reports', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
               onTap: () {
-                if (isMobile) Navigator.pop(context); // Close the drawer first if on mobile
+                if (isMobile) Navigator.pop(context);
                 _navigateToExport();
               },
             ),
@@ -920,7 +966,6 @@ class _DashboardWebState extends State<DashboardWeb> {
     );
   }
 
-  // 🚀 RESPONSIVE: Main Content extracted out to handle both Desktop/Mobile Views efficiently
   Widget _buildMainContent(bool isMobile, double padding) {
     if (_isLoading) return Center(child: CircularProgressIndicator(color: _accentCyan));
 
@@ -939,7 +984,7 @@ class _DashboardWebState extends State<DashboardWeb> {
               Container(
                 decoration: BoxDecoration(color: _cardDark, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.white.withOpacity(0.1))),
                 child: Row(
-                  mainAxisSize: MainAxisSize.min, // Ensures it shrinks well
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     IconButton(icon: const Icon(Icons.chevron_left, color: Colors.white54), onPressed: () => _shiftDate(-1)),
                     GestureDetector(onTap: _pickDateRange, child: Padding(padding: const EdgeInsets.symmetric(horizontal: 16), child: Text(_getFormattedDateString(), style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)))),
@@ -950,7 +995,6 @@ class _DashboardWebState extends State<DashboardWeb> {
             ],
           ),
 
-          // Show Camera Selector here on Mobile instead of App Bar
           if (isMobile && _availableCameras.length > 1)
             Container(
               margin: const EdgeInsets.only(top: 16),
@@ -1004,22 +1048,17 @@ class _DashboardWebState extends State<DashboardWeb> {
     );
   }
 
-  // 🚀 THE MAGIC: The build method now watches screen size!
   @override
   Widget build(BuildContext context) {
-    // Check if screen is less than 900px wide
     bool isMobile = MediaQuery.of(context).size.width < 900;
     double padding = isMobile ? 16.0 : 32.0;
 
     return Scaffold(
       backgroundColor: _bgDark,
-      // Create a slide-out hamburger menu drawer for the sidebar if on mobile
       drawer: isMobile ? Drawer(child: _buildSidebar(isMobile: true)) : null,
       appBar: isMobile ? _buildMobileAppBar() : null,
       body: isMobile
-      // If Mobile: Just show content (Sidebar is in Drawer now)
           ? _buildMainContent(isMobile, padding)
-      // If Desktop: Show Sidebar row alongside Main Content
           : Row(
         children: [
           _buildSidebar(isMobile: false),

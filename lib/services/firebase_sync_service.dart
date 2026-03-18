@@ -16,29 +16,37 @@ class FirebaseSyncService {
   static bool _hasSynced22 = false;
 
   /// Starts the background clock to watch for 14:00 and 22:00
+  /// Includes "Catch-up" logic in case the PC was asleep!
   static void startScheduledSync(Future<void> Function() onSyncRequested) {
     _scheduleTimer?.cancel();
-    debugPrint("🕒 FirebaseSyncService: Scheduled sync started. Waiting for 14:00 and 22:00...");
+    debugPrint("🕒 FirebaseSyncService: Scheduled sync started. Monitoring for 14:00 and 22:00 windows...");
 
     // Check the time every 1 minute
     _scheduleTimer = Timer.periodic(const Duration(minutes: 1), (timer) async {
       final now = DateTime.now();
 
-      // Trigger at 2:00 PM (14:00)
-      if (now.hour == 14 && now.minute == 0 && !_hasSynced14) {
+      // 🚀 WINDOW 1: Anytime between 14:00 and 21:59
+      // If the PC wakes up at 14:15, this will instantly trigger because _hasSynced14 is false!
+      if (now.hour >= 14 && now.hour < 22 && !_hasSynced14) {
         _hasSynced14 = true;
-        debugPrint("🚀 FirebaseSyncService: 14:00 Sync Triggered!");
-        await onSyncRequested();
-      }
-      // Trigger at 10:00 PM (22:00)
-      else if (now.hour == 22 && now.minute == 0 && !_hasSynced22) {
-        _hasSynced22 = true;
-        debugPrint("🚀 FirebaseSyncService: 22:00 Sync Triggered!");
+        debugPrint("🚀 FirebaseSyncService: Auto-sync triggered for 14:00 window! (Time: ${now.hour}:${now.minute})");
         await onSyncRequested();
       }
 
-      // Reset the flags at midnight for the next day
-      if (now.hour == 0) {
+      // 🚀 WINDOW 2: Anytime between 22:00 and 23:59
+      // If the store closes late or the PC was asleep, it catches up here.
+      if (now.hour >= 22 && !_hasSynced22) {
+        _hasSynced22 = true;
+        debugPrint("🚀 FirebaseSyncService: Auto-sync triggered for 22:00 window! (Time: ${now.hour}:${now.minute})");
+        await onSyncRequested();
+      }
+
+      // 🔄 MIDNIGHT RESET
+      // When the clock rolls over to morning (00:00 to 13:59), we reset the flags for the new day.
+      if (now.hour < 14) {
+        if (_hasSynced14 || _hasSynced22) {
+          debugPrint("🔄 FirebaseSyncService: Daily flags reset. Ready for today's syncs.");
+        }
         _hasSynced14 = false;
         _hasSynced22 = false;
       }

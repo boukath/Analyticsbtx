@@ -21,11 +21,52 @@ class PolarisData {
 
   @override
   String toString() {
-    return '📅 Date: ${date ?? "Unknown"}\n💶 CA: €${chiffreAffaires.toStringAsFixed(2)}\n🎫 Tickets: $totalTickets\n👤 Clients: $totalClients';
+    return '📅 Date: ${date ?? "Unknown"}\n💶 CA: ${chiffreAffaires.toStringAsFixed(2)} DZD\n🎫 Tickets: $totalTickets\n👤 Clients: $totalClients';
   }
 }
 
 class PolarisParserService {
+
+  // 🚀 NEW: Scans a folder, finds the newest .sav file, and processes it!
+  Future<PolarisData?> processPolarisFolder(String folderPath) async {
+    print('🔍 Scanning folder for Polaris .sav files: $folderPath');
+
+    try {
+      final dir = Directory(folderPath);
+      if (!await dir.exists()) {
+        print('❌ Error: Directory does not exist.');
+        return null;
+      }
+
+      // 1. Get all files in the directory
+      List<FileSystemEntity> entities = dir.listSync(recursive: false);
+
+      // 2. Filter for .sav files
+      List<File> savFiles = entities
+          .whereType<File>()
+          .where((f) => f.path.toLowerCase().endsWith('.sav'))
+          .toList();
+
+      if (savFiles.isEmpty) {
+        print('❌ No .sav files found in the selected folder.');
+        return null;
+      }
+
+      // 3. Sort by last modified date (newest first)
+      savFiles.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+
+      File latestSavFile = savFiles.first;
+      print('✅ Found latest .sav backup: ${latestSavFile.path}');
+
+      // 4. Process the found file using the existing method
+      return await processPolarisFile(latestSavFile.path);
+
+    } catch (e) {
+      print('❌ Failed to scan folder: $e');
+      return null;
+    }
+  }
+
   /// Processes the .sav file and returns the extracted PolarisData.
   Future<PolarisData?> processPolarisFile(String filePath) async {
     print('🔍 Starting to process Polaris file: $filePath');

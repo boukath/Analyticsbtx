@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:cloud_firestore/cloud_firestore.dart'; // 🚀 NEW: Import Firestore
 
 class StoreProfileScreen extends StatefulWidget {
   final bool isFrench;
@@ -22,6 +23,7 @@ class _StoreProfileScreenState extends State<StoreProfileScreen> {
   String? _tempLogoPath;
   bool _isLoading = true;
   bool _syncIndividualCameras = false;
+  bool _enablePosFeatures = true; // 🚀 NEW: State for POS Features
 
   final Color _bgDark = const Color(0xFF0F172A);
   final Color _cardDark = const Color(0xFF1E293B);
@@ -42,6 +44,7 @@ class _StoreProfileScreenState extends State<StoreProfileScreen> {
       _clientIdCtrl.text = prefs.getString('firebase_client_id') ?? '';
       _tempLogoPath = prefs.getString('store_logo_path');
       _syncIndividualCameras = prefs.getBool('sync_individual_cameras') ?? false;
+      _enablePosFeatures = prefs.getBool('enable_pos_features') ?? true; // 🚀 Load toggle
       _isLoading = false;
     });
   }
@@ -52,9 +55,32 @@ class _StoreProfileScreenState extends State<StoreProfileScreen> {
     await prefs.setString('store_location', _locCtrl.text.trim());
     await prefs.setString('firebase_client_id', _clientIdCtrl.text.trim());
     await prefs.setBool('sync_individual_cameras', _syncIndividualCameras);
+    await prefs.setBool('enable_pos_features', _enablePosFeatures); // 🚀 Save locally
 
     if (_tempLogoPath != null) {
       await prefs.setString('store_logo_path', _tempLogoPath!);
+    }
+
+    // 🚀 NEW: SYNC STORE MODE TO FIREBASE
+    String clientId = _clientIdCtrl.text.trim();
+    if (clientId.isNotEmpty) {
+      try {
+        // Generate the exact same Store ID used by your FirebaseSyncService
+        String storeId = "${_nameCtrl.text.trim()}_${_locCtrl.text.trim()}".replaceAll(' ', '_').toLowerCase();
+
+        await FirebaseFirestore.instance
+            .collection('clients').doc(clientId)
+            .collection('stores').doc(storeId)
+            .set({
+          'brand': _nameCtrl.text.trim(),
+          'location': _locCtrl.text.trim(),
+          'enable_pos_features': _enablePosFeatures, // Tell the Cloud Dashboard the mode!
+          'last_updated_profile': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+
+      } catch (e) {
+        debugPrint("Failed to sync store profile to Firebase: $e");
+      }
     }
 
     if (mounted) {
@@ -180,6 +206,34 @@ class _StoreProfileScreenState extends State<StoreProfileScreen> {
                   ),
                 ),
                 const SizedBox(height: 24),
+
+                // 🚀 NEW: The Retail/Mall Mode Toggle
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: _bgDark,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: _enablePosFeatures ? _accentCyan : Colors.white.withOpacity(0.1)),
+                  ),
+                  child: SwitchListTile(
+                    activeColor: _accentCyan,
+                    title: Text(
+                      widget.isFrench ? 'Mode Retail (Caisse)' : 'Retail Mode (POS & Sales)',
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                    ),
+                    subtitle: Text(
+                      widget.isFrench
+                          ? 'Désactiver pour les centres commerciaux (Trafic uniquement)'
+                          : 'Disable for Malls/Buildings (Traffic only)',
+                      style: const TextStyle(color: Colors.white54, fontSize: 12),
+                    ),
+                    value: _enablePosFeatures,
+                    onChanged: (bool value) {
+                      setState(() => _enablePosFeatures = value);
+                    },
+                  ),
+                ),
 
                 // The Database Optimization Toggle
                 Container(

@@ -29,6 +29,8 @@ class PdfExportService {
     required double conversionRate,
     required double avgBasket,
     required double upt,
+    // 🚀 NEW: MALL VS RETAIL MODE FLAG
+    required bool enablePosFeatures,
   }) async {
     // 1. Create a new PDF document
     final pdf = pw.Document(
@@ -162,11 +164,15 @@ class PdfExportService {
                 _buildPdfSummaryCard('TOTAL OUT', totalOut.toString(), primaryColor, textLight),
                 _buildPdfSummaryCard('TOTAL VISITORS', totalVisitors.toString(), primaryColor, accentColor),
                 _buildPdfSummaryCard('PEAK HOUR', peakHour, primaryColor, textLight),
-                _buildPdfSummaryCard('REVENUE', '${revenue.toStringAsFixed(0)} DZD', PdfColor.fromHex('#E8F5E9'), PdfColor.fromHex('#2E7D32')),
-                _buildPdfSummaryCard('CLIENTS', clients.toString(), PdfColor.fromHex('#F3E5F5'), PdfColor.fromHex('#6A1B9A')),
-                _buildPdfSummaryCard('CONV RATE', '${conversionRate.toStringAsFixed(1)}%', PdfColor.fromHex('#FFF3E0'), PdfColor.fromHex('#EF6C00')),
-                _buildPdfSummaryCard('AVG BASKET', '${avgBasket.toStringAsFixed(0)} DZD', PdfColor.fromHex('#E3F2FD'), PdfColor.fromHex('#1565C0')),
-                _buildPdfSummaryCard('UPT', upt.toStringAsFixed(2), PdfColor.fromHex('#FCE4EC'), PdfColor.fromHex('#C2185B')),
+
+                // 🚀 Conditionally add POS cards only if Retail Mode is enabled
+                if (enablePosFeatures) ...[
+                  _buildPdfSummaryCard('REVENUE', '${revenue.toStringAsFixed(0)} DZD', PdfColor.fromHex('#E8F5E9'), PdfColor.fromHex('#2E7D32')),
+                  _buildPdfSummaryCard('CLIENTS', clients.toString(), PdfColor.fromHex('#F3E5F5'), PdfColor.fromHex('#6A1B9A')),
+                  _buildPdfSummaryCard('CONV RATE', '${conversionRate.toStringAsFixed(1)}%', PdfColor.fromHex('#FFF3E0'), PdfColor.fromHex('#EF6C00')),
+                  _buildPdfSummaryCard('AVG BASKET', '${avgBasket.toStringAsFixed(0)} DZD', PdfColor.fromHex('#E3F2FD'), PdfColor.fromHex('#1565C0')),
+                  _buildPdfSummaryCard('UPT', upt.toStringAsFixed(2), PdfColor.fromHex('#FCE4EC'), PdfColor.fromHex('#C2185B')),
+                ]
               ],
             ),
             pw.SizedBox(height: 30),

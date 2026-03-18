@@ -1,7 +1,7 @@
 // lib/screens/export_screen.dart
 
 import 'dart:io';
-import 'package:flutter/foundation.dart'; // 🚀 NEW: Required for kIsWeb
+import 'package:flutter/foundation.dart'; // 🚀 Required for kIsWeb
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/people_count.dart';
@@ -20,7 +20,7 @@ class ExportScreen extends StatefulWidget {
   final String? storeName;
   final String? storeLocation;
 
-  // 🚀 NEW: The callback to fetch more data from Firebase when dates change!
+  // The callback to fetch more data from Firebase when dates change!
   final Future<Map<String, dynamic>> Function(DateTimeRange)? onFetchWebData;
 
   const ExportScreen({
@@ -33,7 +33,7 @@ class ExportScreen extends StatefulWidget {
     required this.posDatabase,
     this.storeName,
     this.storeLocation,
-    this.onFetchWebData, // 🚀 NEW
+    this.onFetchWebData,
   }) : super(key: key);
 
   @override
@@ -41,7 +41,6 @@ class ExportScreen extends StatefulWidget {
 }
 
 class _ExportScreenState extends State<ExportScreen> {
-  // 🚀 NEW: Local data storage so we can overwrite it when picking new dates
   late List<PeopleCount> _localRawData;
   late Map<String, Map<String, num>> _localPosDatabase;
   bool _isFetching = false;
@@ -51,7 +50,10 @@ class _ExportScreenState extends State<ExportScreen> {
   late DateTimeRange _selectedDateRange;
   ChartFilter _currentFilter = ChartFilter.hourly;
 
-  // --- Theme Colors (matching your dashboard) ---
+  // 🚀 NEW: State to hold the POS Feature toggle
+  bool _enablePosFeatures = true;
+
+  // --- Theme Colors ---
   final Color _bgDark = const Color(0xFF0F172A);
   final Color _cardDark = const Color(0xFF1E293B);
   final Color _accentCyan = const Color(0xFF06B6D4);
@@ -72,9 +74,22 @@ class _ExportScreenState extends State<ExportScreen> {
         start: DateTime(now.year, now.month, now.day),
         end: DateTime(now.year, now.month, now.day)
     );
+
+    // 🚀 Fetch the Retail Mode toggle immediately
+    _loadSettings();
   }
 
-  // 🚀 NEW: The core function that fetches data when the date changes
+  // 🚀 NEW: Load the global settings to see if POS should be visible
+  Future<void> _loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      // Check the key depending on if we are on Web or Windows
+      _enablePosFeatures = kIsWeb
+          ? (prefs.getBool('web_enable_pos_features') ?? true)
+          : (prefs.getBool('enable_pos_features') ?? true);
+    });
+  }
+
   Future<void> _handleDateRangeChange(DateTimeRange newRange) async {
     setState(() {
       _selectedDateRange = newRange;
@@ -101,7 +116,6 @@ class _ExportScreenState extends State<ExportScreen> {
 
   // --- Core Logic: Filter and Export ---
   Future<void> _processAndExport(String format) async {
-    // 🚀 USE LOCAL DATA HERE INSTEAD OF widget.rawData
     if (_localRawData.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -152,19 +166,21 @@ class _ExportScreenState extends State<ExportScreen> {
     double totalRevenue = 0, upt = 0, avgBasket = 0, conversionRate = 0;
     int totalClients = 0, totalArticles = 0;
 
-    for (DateTime d = _selectedDateRange.start; d.isBefore(_selectedDateRange.end.add(const Duration(days: 1))); d = d.add(const Duration(days: 1))) {
-      String dateStr = "${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
-      // 🚀 USE LOCAL DATA HERE INSTEAD OF widget.posDatabase
-      if (_localPosDatabase.containsKey(dateStr)) {
-        totalRevenue += _localPosDatabase[dateStr]!['ca'] ?? 0;
-        totalClients += (_localPosDatabase[dateStr]!['clients'] ?? 0).toInt();
-        totalArticles += (_localPosDatabase[dateStr]!['articles'] ?? 0).toInt();
+    // Only compute POS numbers if the feature is enabled!
+    if (_enablePosFeatures) {
+      for (DateTime d = _selectedDateRange.start; d.isBefore(_selectedDateRange.end.add(const Duration(days: 1))); d = d.add(const Duration(days: 1))) {
+        String dateStr = "${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
+        if (_localPosDatabase.containsKey(dateStr)) {
+          totalRevenue += _localPosDatabase[dateStr]!['ca'] ?? 0;
+          totalClients += (_localPosDatabase[dateStr]!['clients'] ?? 0).toInt();
+          totalArticles += (_localPosDatabase[dateStr]!['articles'] ?? 0).toInt();
+        }
       }
-    }
 
-    conversionRate = totalVisitors > 0 ? (totalClients / totalVisitors) * 100 : 0.0;
-    avgBasket = totalClients > 0 ? (totalRevenue / totalClients) : 0.0;
-    upt = totalClients > 0 ? (totalArticles / totalClients) : 0.0;
+      conversionRate = totalVisitors > 0 ? (totalClients / totalVisitors) * 100 : 0.0;
+      avgBasket = totalClients > 0 ? (totalRevenue / totalClients) : 0.0;
+      upt = totalClients > 0 ? (totalArticles / totalClients) : 0.0;
+    }
 
     // 3. DIRECTORY & PREFERENCES MANAGEMENT
     final prefs = await SharedPreferences.getInstance();
@@ -174,7 +190,7 @@ class _ExportScreenState extends State<ExportScreen> {
     String storeLocation = widget.storeLocation ?? prefs.getString('store_location') ?? "MAIN BRANCH";
     String? storeLogoPath = prefs.getString('store_logo_path');
 
-    // 🚀 4. SMART FILE NAMING
+    // 4. SMART FILE NAMING
     String sStart = "${_selectedDateRange.start.year}-${_selectedDateRange.start.month.toString().padLeft(2, '0')}-${_selectedDateRange.start.day.toString().padLeft(2, '0')}";
     String sEnd = "${_selectedDateRange.end.year}-${_selectedDateRange.end.month.toString().padLeft(2, '0')}-${_selectedDateRange.end.day.toString().padLeft(2, '0')}";
     String sCam = _selectedCamera.replaceAll(' ', '_');
@@ -194,20 +210,17 @@ class _ExportScreenState extends State<ExportScreen> {
 
     String dateRangeStr = sStart == sEnd ? sStart : "$sStart to $sEnd";
 
-    // 🚀 5. CROSS-PLATFORM PATH RESOLUTION
+    // 5. CROSS-PLATFORM PATH RESOLUTION
     String finalOutputPath = "";
     String folderPathToOpen = "";
 
     if (kIsWeb) {
-      // 🌐 WEB: We just pass a dummy name, the browser will download it automatically
       finalOutputPath = "$niceFileName.$format";
     } else {
-      // 💻 WINDOWS: Resolve the physical directory
       String baseDir = prefs.getString('saved_data_folder') ?? 'C:\\comptage';
       String reportsDirPath = '$baseDir${Platform.pathSeparator}Reports';
       Directory reportsDir = Directory(reportsDirPath);
 
-      // Create the "Reports" folder if it doesn't exist
       if (!await reportsDir.exists()) {
         await reportsDir.create(recursive: true);
       }
@@ -236,6 +249,7 @@ class _ExportScreenState extends State<ExportScreen> {
           conversionRate: conversionRate,
           avgBasket: avgBasket,
           upt: upt,
+          enablePosFeatures: _enablePosFeatures, // 🚀 NEW: Pass the boolean to the PDF Builder!
         );
       } else {
         await CsvExportService.generateAndSaveCsv(
@@ -252,10 +266,10 @@ class _ExportScreenState extends State<ExportScreen> {
           conversionRate: conversionRate,
           avgBasket: avgBasket,
           upt: upt,
+          enablePosFeatures: _enablePosFeatures, // 🚀 NEW: Pass the boolean to the CSV Builder!
         );
       }
 
-      // Show dynamic success dialog
       _showSuccessDialog(finalOutputPath, folderPathToOpen, format.toUpperCase());
 
     } catch (e) {
@@ -268,7 +282,7 @@ class _ExportScreenState extends State<ExportScreen> {
     }
   }
 
-  // 🚀 7. WEB-SAFE SUCCESS UI
+  // 7. WEB-SAFE SUCCESS UI
   void _showSuccessDialog(String filePath, String folderPath, String fileType) {
     showDialog(
         context: context,
@@ -283,7 +297,6 @@ class _ExportScreenState extends State<ExportScreen> {
             ],
           ),
           content: Text(
-            // Show a different message based on whether it's downloading via Web or saving locally
             kIsWeb
                 ? (widget.isFrench
                 ? "Le fichier $fileType a été généré et le téléchargement a commencé."
@@ -298,7 +311,6 @@ class _ExportScreenState extends State<ExportScreen> {
               onPressed: () => Navigator.pop(context),
               child: const Text("CLOSE", style: TextStyle(color: Colors.white54)),
             ),
-            // 🌐 WEB SAFETY: Hide the "Open Folder" button on the web completely
             if (!kIsWeb)
               ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(backgroundColor: Colors.greenAccent, foregroundColor: Colors.black),
@@ -316,7 +328,6 @@ class _ExportScreenState extends State<ExportScreen> {
     );
   }
 
-  // 🚀 FIXED: Added Yearly and All Time logic, and fixed the Monthly 30-day bug
   void _applyPreset(String presetType) {
     DateTime end = DateTime.now();
     DateTime start = end;
@@ -342,7 +353,6 @@ class _ExportScreenState extends State<ExportScreen> {
       _currentFilter = ChartFilter.daily;
     }
 
-    // 🚀 Trigger the fetch
     _handleDateRangeChange(DateTimeRange(start: start, end: end));
   }
 
@@ -364,7 +374,14 @@ class _ExportScreenState extends State<ExportScreen> {
               children: [
                 Icon(Icons.analytics, size: 80, color: _accentCyan.withOpacity(0.5)),
                 const SizedBox(height: 24),
-                Text(widget.isFrench ? 'Générez des rapports précis avec les données de trafic et de caisse.' : 'Generate precise reports with injected traffic and POS data.', textAlign: TextAlign.center, style: const TextStyle(color: Colors.white54, fontSize: 16)),
+                Text(
+                  // 🚀 Smart subtitle updates based on mode!
+                    _enablePosFeatures
+                        ? (widget.isFrench ? 'Générez des rapports précis avec les données de trafic et de caisse.' : 'Generate precise reports with injected traffic and POS data.')
+                        : (widget.isFrench ? 'Générez des rapports détaillés sur le flux des visiteurs.' : 'Generate detailed footfall traffic reports.'),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.white54, fontSize: 16)
+                ),
                 const SizedBox(height: 48),
 
                 Text(widget.isFrench ? '1. CHOISIR LA CAMÉRA' : '1. SELECT CAMERA', style: TextStyle(color: _accentCyan, fontWeight: FontWeight.bold, letterSpacing: 1)),
@@ -385,7 +402,6 @@ class _ExportScreenState extends State<ExportScreen> {
                 Text(widget.isFrench ? '2. PLAGE DE DATES' : '2. DATE RANGE', style: TextStyle(color: _accentCyan, fontWeight: FontWeight.bold, letterSpacing: 1)),
                 const SizedBox(height: 12),
 
-                // 🚀 FIXED: Replaced "Row" with "Wrap" so all 5 buttons fit beautifully without overflowing
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
@@ -403,11 +419,8 @@ class _ExportScreenState extends State<ExportScreen> {
                     onTap: () async {
                       DateTimeRange? picked = await showDateRangePicker(
                           context: context,
-                          // 🚀 ULTIMATE FIX: Opens directly in TEXT INPUT mode!
-                          // Now you can easily type "01/01/2025" and "17/03/2026" using your keyboard.
                           initialEntryMode: DatePickerEntryMode.input,
                           firstDate: DateTime(2020),
-                          // 🚀 ULTIMATE FIX: Allows selecting up to 10 years into the future!
                           lastDate: DateTime.now().add(const Duration(days: 3650)),
                           initialDateRange: _selectedDateRange,
                           builder: (context, child) => Theme(
@@ -422,7 +435,6 @@ class _ExportScreenState extends State<ExportScreen> {
                               child: child!
                           )
                       );
-                      // 🚀 USE THE NEW HANDLER TO TRIGGER A FETCH
                       if (picked != null) _handleDateRangeChange(picked);
                     },
                     child: Container(
@@ -450,7 +462,6 @@ class _ExportScreenState extends State<ExportScreen> {
                 ),
                 const SizedBox(height: 48),
 
-                // 🚀 SHOW LOADING SPINNER WHEN FETCHING NEW DATA
                 _isFetching
                     ? Center(child: CircularProgressIndicator(color: _accentCyan))
                     : Row(children: [
@@ -466,7 +477,6 @@ class _ExportScreenState extends State<ExportScreen> {
     );
   }
 
-  // 🚀 FIXED: Made the buttons smaller horizontally to fit perfectly in the Wrap
   Widget _buildPresetButton(String presetId, String label) {
     return OutlinedButton(
         style: OutlinedButton.styleFrom(
