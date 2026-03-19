@@ -21,13 +21,15 @@ class _CameraFtpSetupScreenState extends State<CameraFtpSetupScreen> {
   List<String> _cameraNames = [];
   final Map<String, String> _cameraIps = {};
 
+  // 🚀 NEW: Keeps track of whether the camera is Model 2 (2D) or Model 1 (3D)
+  final Map<String, bool> _cameraIsModel2 = {};
+
   @override
   void initState() {
     super.initState();
     _loadSavedData();
   }
 
-  // 🚀 Modified: Loads exactly the names the technician created
   Future<void> _loadSavedData() async {
     final prefs = await SharedPreferences.getInstance();
     List<String>? savedList = prefs.getStringList('camera_names_list');
@@ -35,27 +37,28 @@ class _CameraFtpSetupScreenState extends State<CameraFtpSetupScreen> {
     setState(() {
       _cameraNames.clear();
       _cameraIps.clear();
+      _cameraIsModel2.clear();
 
       if (savedList != null && savedList.isNotEmpty) {
         _cameraNames.addAll(savedList);
       } else {
-        _cameraNames.add('Camera 1'); // Default starting point
+        _cameraNames.add('Camera 1');
       }
 
       for (String camName in _cameraNames) {
         _cameraIps[camName] = prefs.getString('ip_$camName') ?? '';
+        // 🚀 NEW: Load the saved model preference (Defaults to false / Model 1)
+        _cameraIsModel2[camName] = prefs.getBool('isModel2_$camName') ?? false;
       }
     });
   }
 
-  // 🚀 Modified: Adds a new camera to the list
   Future<void> _addNewCamera() async {
     final prefs = await SharedPreferences.getInstance();
 
     int nextNum = _cameraNames.length + 1;
     String newCamName = 'Camera $nextNum';
 
-    // Ensure we don't duplicate default names if they were heavily edited
     while (_cameraNames.contains(newCamName)) {
       nextNum++;
       newCamName = 'Camera $nextNum';
@@ -64,12 +67,12 @@ class _CameraFtpSetupScreenState extends State<CameraFtpSetupScreen> {
     setState(() {
       _cameraNames.add(newCamName);
       _cameraIps[newCamName] = '';
+      _cameraIsModel2[newCamName] = false; // Default to Model 1
     });
 
     await prefs.setStringList('camera_names_list', _cameraNames);
   }
 
-  // 🚀 Modified: Handles deleting a custom-named camera
   Future<void> _deleteCamera(int indexToDelete) async {
     final prefs = await SharedPreferences.getInstance();
     String camName = _cameraNames[indexToDelete];
@@ -77,15 +80,17 @@ class _CameraFtpSetupScreenState extends State<CameraFtpSetupScreen> {
     setState(() {
       _cameraNames.removeAt(indexToDelete);
       _cameraIps.remove(camName);
+      _cameraIsModel2.remove(camName);
 
-      // Keep at least one empty slot
       if (_cameraNames.isEmpty) {
         _cameraNames.add('Camera 1');
         _cameraIps['Camera 1'] = '';
+        _cameraIsModel2['Camera 1'] = false;
       }
     });
 
-    await prefs.remove('ip_$camName'); // Delete the IP associated with this exact name
+    await prefs.remove('ip_$camName');
+    await prefs.remove('isModel2_$camName'); // 🚀 NEW: Clean up the saved model type
     await prefs.setStringList('camera_names_list', _cameraNames);
   }
 
@@ -121,10 +126,12 @@ class _CameraFtpSetupScreenState extends State<CameraFtpSetupScreen> {
     );
   }
 
-  // 🚀 Modified: The Setup Dialog now lets you edit BOTH Name and IP
   void _showSetupDialog(String currentName, int index) {
     TextEditingController nameController = TextEditingController(text: currentName);
     TextEditingController ipController = TextEditingController(text: _cameraIps[currentName]);
+
+    // 🚀 NEW: Local state for the dialog's dropdown
+    bool localIsModel2 = _cameraIsModel2[currentName] ?? false;
     String errorMessage = "";
 
     showDialog(
@@ -145,7 +152,6 @@ class _CameraFtpSetupScreenState extends State<CameraFtpSetupScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // --- CAMERA / FOLDER NAME ---
                   const Text('Camera Name (Must match Folder Name exactly):', style: TextStyle(color: Colors.white54, fontSize: 14)),
                   const SizedBox(height: 8),
                   TextField(
@@ -153,7 +159,6 @@ class _CameraFtpSetupScreenState extends State<CameraFtpSetupScreen> {
                     style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                     decoration: InputDecoration(
                       hintText: 'e.g. Main Door',
-                      hintStyle: const TextStyle(color: Colors.white24),
                       filled: true,
                       fillColor: _bgDark,
                       prefixIcon: const Icon(Icons.folder, color: _accentCyan),
@@ -163,7 +168,6 @@ class _CameraFtpSetupScreenState extends State<CameraFtpSetupScreen> {
                   ),
                   const SizedBox(height: 24),
 
-                  // --- IP ADDRESS ---
                   const Text('Camera IP Address / Link:', style: TextStyle(color: Colors.white54, fontSize: 14)),
                   const SizedBox(height: 8),
                   TextField(
@@ -171,11 +175,43 @@ class _CameraFtpSetupScreenState extends State<CameraFtpSetupScreen> {
                     style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                     decoration: InputDecoration(
                       hintText: 'e.g. 192.168.1.7',
-                      hintStyle: const TextStyle(color: Colors.white24),
                       filled: true,
                       fillColor: _bgDark,
                       prefixIcon: const Icon(Icons.link, color: Colors.greenAccent),
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+
+                  // 🚀 NEW: Camera Model Dropdown
+                  const Text('Camera Model:', style: TextStyle(color: Colors.white54, fontSize: 14)),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    decoration: BoxDecoration(
+                      color: _bgDark,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<bool>(
+                        value: localIsModel2,
+                        dropdownColor: _cardDark,
+                        isExpanded: true,
+                        icon: const Icon(Icons.expand_more, color: _accentCyan),
+                        items: const [
+                          DropdownMenuItem(
+                              value: false,
+                              child: Text('Model 1 - 3D (/ftp)', style: TextStyle(color: Colors.white))
+                          ),
+                          DropdownMenuItem(
+                              value: true,
+                              child: Text('Model 2 - 2D (/ftpserver/table/)', style: TextStyle(color: Colors.white))
+                          ),
+                        ],
+                        onChanged: (val) {
+                          if (val != null) setDialogState(() => localIsModel2 = val);
+                        },
+                      ),
                     ),
                   ),
                 ],
@@ -202,17 +238,20 @@ class _CameraFtpSetupScreenState extends State<CameraFtpSetupScreen> {
 
                     final prefs = await SharedPreferences.getInstance();
 
-                    // 🚀 Magic: Rename and re-link the IP to the new custom folder name
                     setState(() {
                       if (newName != currentName) {
                         _cameraNames[index] = newName;
                         _cameraIps.remove(currentName);
-                        prefs.remove('ip_$currentName'); // delete old link
+                        _cameraIsModel2.remove(currentName);
+                        prefs.remove('ip_$currentName');
+                        prefs.remove('isModel2_$currentName');
                       }
                       _cameraIps[newName] = newIp;
+                      _cameraIsModel2[newName] = localIsModel2; // Save locally
                     });
 
-                    await prefs.setString('ip_$newName', newIp); // create new link
+                    await prefs.setString('ip_$newName', newIp);
+                    await prefs.setBool('isModel2_$newName', localIsModel2); // Save to disk
                     await prefs.setStringList('camera_names_list', _cameraNames);
 
                     if (context.mounted) Navigator.pop(context);
@@ -249,6 +288,7 @@ class _CameraFtpSetupScreenState extends State<CameraFtpSetupScreen> {
         itemBuilder: (context, index) {
           String camName = _cameraNames[index];
           String currentIp = _cameraIps[camName] ?? '';
+          bool isModel2 = _cameraIsModel2[camName] ?? false; // 🚀 Check model
           bool hasIp = currentIp.isNotEmpty;
 
           return Container(
@@ -264,7 +304,8 @@ class _CameraFtpSetupScreenState extends State<CameraFtpSetupScreen> {
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: const BoxDecoration(color: _bgDark, shape: BoxShape.circle),
-                  child: Icon(Icons.camera_alt, color: hasIp ? _accentCyan : Colors.white38),
+                  // Icon changes based on model type!
+                  child: Icon(isModel2 ? Icons.folder_shared : Icons.camera_alt, color: hasIp ? _accentCyan : Colors.white38),
                 ),
                 const SizedBox(width: 16),
                 Expanded(
@@ -274,7 +315,8 @@ class _CameraFtpSetupScreenState extends State<CameraFtpSetupScreen> {
                       Text(camName, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 4),
                       Text(
-                          hasIp ? 'IP: $currentIp' : 'No IP configured',
+                        // 🚀 NEW: Shows the selected model in the list!
+                          hasIp ? 'IP: $currentIp  •  ${isModel2 ? "2D Model" : "3D Model"}' : 'No IP configured',
                           style: TextStyle(color: hasIp ? Colors.greenAccent : Colors.redAccent, fontSize: 14)
                       ),
                     ],
@@ -282,7 +324,7 @@ class _CameraFtpSetupScreenState extends State<CameraFtpSetupScreen> {
                 ),
                 IconButton(
                   icon: const Icon(Icons.edit, color: Colors.white54),
-                  onPressed: () => _showSetupDialog(camName, index), // Passes the exact name to edit
+                  onPressed: () => _showSetupDialog(camName, index),
                   tooltip: 'Edit Camera & IP',
                 ),
                 IconButton(
@@ -304,7 +346,8 @@ class _CameraFtpSetupScreenState extends State<CameraFtpSetupScreen> {
                         MaterialPageRoute(
                             builder: (context) => WindowsCameraWebScreen(
                                 cameraName: camName,
-                                ipAddress: currentIp
+                                ipAddress: currentIp,
+                                initialIsModel2: isModel2 // 🚀 Pass the saved preference
                             )
                         )
                     );
@@ -325,8 +368,14 @@ class _CameraFtpSetupScreenState extends State<CameraFtpSetupScreen> {
 class WindowsCameraWebScreen extends StatefulWidget {
   final String cameraName;
   final String ipAddress;
+  final bool initialIsModel2; // 🚀 NEW: Accept the saved preference
 
-  const WindowsCameraWebScreen({Key? key, required this.cameraName, required this.ipAddress}) : super(key: key);
+  const WindowsCameraWebScreen({
+    Key? key,
+    required this.cameraName,
+    required this.ipAddress,
+    required this.initialIsModel2,
+  }) : super(key: key);
 
   @override
   State<WindowsCameraWebScreen> createState() => _WindowsCameraWebScreenState();
@@ -335,13 +384,12 @@ class WindowsCameraWebScreen extends StatefulWidget {
 class _WindowsCameraWebScreenState extends State<WindowsCameraWebScreen> {
   final _webviewController = WebviewController();
   bool _isWebviewInitialized = false;
-
-  // 🚀 ADDED: Tracks whether we are viewing the default FTP page or the Model 2 table
-  bool _isModel2 = false;
+  late bool _isModel2; // 🚀 Initialize this from the widget parameter
 
   @override
   void initState() {
     super.initState();
+    _isModel2 = widget.initialIsModel2; // Set default based on user's saved choice
     initPlatformState();
   }
 
@@ -350,7 +398,11 @@ class _WindowsCameraWebScreenState extends State<WindowsCameraWebScreen> {
         ? widget.ipAddress
         : 'http://${widget.ipAddress}';
 
-    // 🚀 Load the appropriate path based on the selected model
+    // Safety check: Remove trailing slash if user accidentally typed "192.168.1.7/"
+    if (baseUrl.endsWith('/')) {
+      baseUrl = baseUrl.substring(0, baseUrl.length - 1);
+    }
+
     String targetUrl = _isModel2
         ? '$baseUrl/ftpserver/table/'
         : '$baseUrl/ftp';
@@ -373,7 +425,6 @@ class _WindowsCameraWebScreenState extends State<WindowsCameraWebScreen> {
     }
   }
 
-  // 🚀 ADDED: Function to switch URLs without reloading the entire widget
   void _switchCameraModel(bool isModel2) {
     setState(() {
       _isModel2 = isModel2;
@@ -383,6 +434,10 @@ class _WindowsCameraWebScreenState extends State<WindowsCameraWebScreen> {
       String baseUrl = widget.ipAddress.startsWith('http')
           ? widget.ipAddress
           : 'http://${widget.ipAddress}';
+
+      if (baseUrl.endsWith('/')) {
+        baseUrl = baseUrl.substring(0, baseUrl.length - 1);
+      }
 
       String targetUrl = isModel2
           ? '$baseUrl/ftpserver/table/'
@@ -413,10 +468,9 @@ class _WindowsCameraWebScreenState extends State<WindowsCameraWebScreen> {
         ),
         iconTheme: const IconThemeData(color: Colors.white),
         actions: [
-          // 🚀 ADDED: Dropdown to switch between Camera Models
           PopupMenuButton<bool>(
             icon: const Icon(Icons.swap_horiz, color: _accentCyan),
-            tooltip: 'Switch Camera Model',
+            tooltip: 'Temporary Switch Model',
             color: _cardDark,
             onSelected: (bool isModel2) {
               _switchCameraModel(isModel2);
@@ -428,7 +482,7 @@ class _WindowsCameraWebScreenState extends State<WindowsCameraWebScreen> {
                   children: [
                     Icon(Icons.camera_alt, color: !_isModel2 ? _accentCyan : Colors.white54, size: 20),
                     const SizedBox(width: 12),
-                    Text("Model 1 (Default)", style: TextStyle(color: !_isModel2 ? _accentCyan : Colors.white)),
+                    Text("Model 1 (3D)", style: TextStyle(color: !_isModel2 ? _accentCyan : Colors.white)),
                   ],
                 ),
               ),
@@ -438,7 +492,7 @@ class _WindowsCameraWebScreenState extends State<WindowsCameraWebScreen> {
                   children: [
                     Icon(Icons.folder_shared, color: _isModel2 ? _accentCyan : Colors.white54, size: 20),
                     const SizedBox(width: 12),
-                    Text("Model 2 (FTP Table)", style: TextStyle(color: _isModel2 ? _accentCyan : Colors.white)),
+                    Text("Model 2 (2D)", style: TextStyle(color: _isModel2 ? _accentCyan : Colors.white)),
                   ],
                 ),
               ),
