@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart'; // 🚀 Gives us kIsWeb!
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:shared_preferences/shared_preferences.dart'; // 🚀 NEW: Needed for the background worker
 import 'l10n/app_localizations.dart';
 
 // --- Desktop Background & Tray Imports ---
@@ -12,6 +13,9 @@ import 'package:tray_manager/tray_manager.dart';
 // --- Firebase imports ---
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
+
+// --- Service imports ---
+import 'services/firebase_sync_service.dart'; // 🚀 NEW: Import the sync service
 
 // --- Screen imports ---
 import 'screens/splash_screen.dart';
@@ -43,6 +47,29 @@ void main() async {
       await windowManager.focus();
       // Crucial step: tell Windows we want to handle the close event ourselves!
       await windowManager.setPreventClose(true);
+    });
+
+    // =======================================================================
+    // 🚀 FIX: GLOBAL BACKGROUND WORKER
+    // Start the scheduled sync here so it runs independently of the UI.
+    // =======================================================================
+    FirebaseSyncService.startScheduledSync(() async {
+      debugPrint("🌍 Global Background Worker: Triggering Scheduled Firebase Sync...");
+
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        String folderPath = prefs.getString('saved_data_folder') ?? '';
+
+        if (folderPath.isNotEmpty) {
+          // Trigger the full folder history sync to catch any data missed while offline/asleep
+          await FirebaseSyncService.syncFullFolderHistory(folderPath);
+          debugPrint("✅ Global Background Worker: Sync successfully finished.");
+        } else {
+          debugPrint("⚠️ Global Background Worker: No data folder configured yet. Skipping sync.");
+        }
+      } catch (e) {
+        debugPrint("❌ Global Background Worker Error: $e");
+      }
     });
   }
 
