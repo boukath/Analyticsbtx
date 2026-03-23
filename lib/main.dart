@@ -1,21 +1,26 @@
 // lib/main.dart
 
+import 'dart:io'; // 🚀 NEW: Required for Platform.resolvedExecutable
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart'; // 🚀 Gives us kIsWeb!
 import 'package:flutter_localizations/flutter_localizations.dart';
-import 'package:shared_preferences/shared_preferences.dart'; // 🚀 NEW: Needed for the background worker
+import 'package:shared_preferences/shared_preferences.dart'; // Needed for the background worker
 import 'l10n/app_localizations.dart';
 
 // --- Desktop Background & Tray Imports ---
 import 'package:window_manager/window_manager.dart';
 import 'package:tray_manager/tray_manager.dart';
 
+// --- Startup Imports ---
+import 'package:launch_at_startup/launch_at_startup.dart'; // 🚀 NEW: For running on Windows boot
+import 'package:package_info_plus/package_info_plus.dart'; // 🚀 NEW: For getting the app's executable path
+
 // --- Firebase imports ---
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 
 // --- Service imports ---
-import 'services/firebase_sync_service.dart'; // 🚀 NEW: Import the sync service
+import 'services/firebase_sync_service.dart'; // Import the sync service
 
 // --- Screen imports ---
 import 'screens/splash_screen.dart';
@@ -33,7 +38,7 @@ void main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
-  // 🚀 NEW: Initialize the window manager for Desktop apps
+  // Initialize the window manager and startup behavior for Desktop apps
   if (!kIsWeb) {
     await windowManager.ensureInitialized();
     WindowOptions windowOptions = const WindowOptions(
@@ -48,6 +53,25 @@ void main() async {
       // Crucial step: tell Windows we want to handle the close event ourselves!
       await windowManager.setPreventClose(true);
     });
+
+    // =======================================================================
+    // 🚀 NEW: WINDOWS STARTUP CONFIGURATION
+    // Configure the app to start automatically when the user logs into Windows.
+    // =======================================================================
+    try {
+      PackageInfo packageInfo = await PackageInfo.fromPlatform();
+
+      launchAtStartup.setup(
+        appName: packageInfo.appName,
+        appPath: Platform.resolvedExecutable,
+      );
+
+      // Enable the app to run on startup
+      await launchAtStartup.enable();
+      debugPrint("✅ App configured to launch at Windows startup.");
+    } catch (e) {
+      debugPrint("❌ Failed to configure launch at startup: $e");
+    }
 
     // =======================================================================
     // 🚀 FIX: GLOBAL BACKGROUND WORKER
