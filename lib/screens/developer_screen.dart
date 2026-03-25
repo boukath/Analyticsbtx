@@ -8,7 +8,7 @@ import 'create_user_screen.dart';
 import 'manage_users_screen.dart';
 import 'store_profile_screen.dart';
 import '../services/firebase_sync_service.dart'; // To call your history sync function
-
+import 'firestore_sync_settings_screen.dart';
 // 🚀 NEW: Import our test screen for Polaris!
 import 'polaris_test_screen.dart';
 
@@ -139,57 +139,25 @@ class DeveloperScreen extends StatelessWidget {
                     onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const FtpServerScreen())),
                   ),
 
-                  // FIXED CARD: Force Cloud Sync
+                  // 🚀 FIXED CARD: Sync Firestore
                   _buildDevCard(
                     context,
-                    title: isFrench ? 'Sync Firestore' : 'Force Cloud Sync',
-                    subtitle: isFrench ? 'Envoyer l\'historique complet' : 'Push full history to Firebase',
-                    icon: Icons.sync_problem,
+                    title: isFrench ? 'Sync Firestore' : 'Sync Firestore',
+                    subtitle: isFrench ? 'Horaires & Synchro forcée' : 'Schedules & Force Sync',
+                    icon: Icons.sync,
                     color: Colors.orangeAccent,
-                    onTap: () async {
-                      // 1. Show starting message
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                            content: Text(isFrench ? "Lecture de l'historique en cours..." : "Reading folder history..."),
-                            backgroundColor: Colors.orangeAccent
+                    onTap: () {
+                      // Navigate to our brand new settings screen!
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => FirestoreSyncSettingsScreen(
+                            isFrench: isFrench,
+                            currentFolderPath: currentFolderPath,
+                            onForceSync: onForceSync,
+                          ),
                         ),
                       );
-
-                      try {
-                        // 2. USE THE PASSED FOLDER PATH DIRECTLY
-                        if (currentFolderPath != null && currentFolderPath!.isNotEmpty) {
-                          // 3. Trigger your full history sync method
-                          await FirebaseSyncService.syncFullFolderHistory(currentFolderPath!);
-
-                          // 4. Also trigger the standard sync just in case the UI needs to update
-                          onForceSync();
-
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                  content: Text(isFrench ? "Synchronisation terminée avec succès!" : "Historical sync complete!"),
-                                  backgroundColor: Colors.green
-                              ),
-                            );
-                          }
-                        } else {
-                          // Triggered if the string is null or empty
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                  content: Text(isFrench ? "Erreur: Aucun dossier source sélectionné." : "Error: No source folder selected."),
-                                  backgroundColor: Colors.redAccent
-                              ),
-                            );
-                          }
-                        }
-                      } catch (e) {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
-                          );
-                        }
-                      }
                     },
                   ),
 

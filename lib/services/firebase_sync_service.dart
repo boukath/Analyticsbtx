@@ -1,54 +1,61 @@
 // lib/services/firebase_sync_service.dart
 
 import 'dart:async';
+import 'dart:convert'; // 🚀 Required for JSON decoding POS data
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/people_count.dart';
-import '../core/data_aggregator.dart'; // 🚀 Add this import
-import 'folder_scanner_service.dart'; // 🚀 NEW: Import your folder scanner!
+import '../core/data_aggregator.dart';
+import 'folder_scanner_service.dart';
 
 class FirebaseSyncService {
   static Timer? _scheduleTimer;
 
-  // Flags to ensure we only sync exactly once per scheduled hour
-  static bool _hasSynced14 = false;
-  static bool _hasSynced22 = false;
+  // A dynamic map to track which specific times have been synced today
+  static Map<String, bool> _syncedToday = {};
+  // Track the current day to know when midnight happens
+  static int _lastResetDay = DateTime.now().day;
 
-  /// Starts the background clock to watch for 14:00 and 22:00
-  /// Includes "Catch-up" logic in case the PC was asleep!
+  /// Starts the background clock to watch for dynamic scheduled times
   static void startScheduledSync(Future<void> Function() onSyncRequested) {
     _scheduleTimer?.cancel();
-    debugPrint("🕒 FirebaseSyncService: Scheduled sync started. Monitoring for 14:00 and 22:00 windows...");
+    debugPrint("🕒 FirebaseSyncService: Dynamic scheduled sync started.");
 
     // Check the time every 1 minute
     _scheduleTimer = Timer.periodic(const Duration(minutes: 1), (timer) async {
       final now = DateTime.now();
 
-      // 🚀 WINDOW 1: Anytime between 14:00 and 21:59
-      // If the PC wakes up at 14:15, this will instantly trigger because _hasSynced14 is false!
-      if (now.hour >= 14 && now.hour < 22 && !_hasSynced14) {
-        _hasSynced14 = true;
-        debugPrint("🚀 FirebaseSyncService: Auto-sync triggered for 14:00 window! (Time: ${now.hour}:${now.minute})");
-        await onSyncRequested();
-      }
-
-      // 🚀 WINDOW 2: Anytime between 22:00 and 23:59
-      // If the store closes late or the PC was asleep, it catches up here.
-      if (now.hour >= 22 && !_hasSynced22) {
-        _hasSynced22 = true;
-        debugPrint("🚀 FirebaseSyncService: Auto-sync triggered for 22:00 window! (Time: ${now.hour}:${now.minute})");
-        await onSyncRequested();
-      }
-
       // 🔄 MIDNIGHT RESET
-      // When the clock rolls over to morning (00:00 to 13:59), we reset the flags for the new day.
-      if (now.hour < 14) {
-        if (_hasSynced14 || _hasSynced22) {
-          debugPrint("🔄 FirebaseSyncService: Daily flags reset. Ready for today's syncs.");
+      // If the day has changed, clear the memory of what was synced so it can run again today
+      if (now.day != _lastResetDay) {
+        _syncedToday.clear();
+        _lastResetDay = now.day;
+        debugPrint("🔄 FirebaseSyncService: Daily flags reset. Ready for today's syncs.");
+      }
+
+      // 🚀 LOAD CUSTOM TIMES
+      final prefs = await SharedPreferences.getInstance();
+      // Default to 14:00 and 22:00 if the user hasn't set anything up yet
+      List<String> savedTimes = prefs.getStringList('sync_times') ?? ['14:00', '22:00'];
+
+      // Check each saved time against the current clock
+      for (String timeStr in savedTimes) {
+        var parts = timeStr.split(':');
+        if (parts.length == 2) {
+          int targetHour = int.tryParse(parts[0]) ?? 0;
+          int targetMinute = int.tryParse(parts[1]) ?? 0;
+
+          // Has the clock passed this specific target time?
+          bool isPastTarget = (now.hour > targetHour) || (now.hour == targetHour && now.minute >= targetMinute);
+
+          // If we passed the time, AND we haven't synced for this specific time today, do it!
+          if (isPastTarget && !(_syncedToday[timeStr] ?? false)) {
+            _syncedToday[timeStr] = true; // Mark this specific time slot as done
+            debugPrint("🚀 FirebaseSyncService: Auto-sync triggered for $timeStr window!");
+            await onSyncRequested();
+          }
         }
-        _hasSynced14 = false;
-        _hasSynced22 = false;
       }
     });
   }
@@ -80,7 +87,27 @@ class FirebaseSyncService {
     try {
       debugPrint("📁 Scanning entire folder for historical data: $folderPath");
 
-      // 1. Read every single .scb file in the folder (and subfolders)
+      // 🚀 1. NEW: Grab POS data automatically from SharedPreferences!
+      final prefs = await SharedPreferences.getInstance();
+      Map<String, dynamic>? posDataForToday;
+      bool enablePos = prefs.getBool('enable_pos_features') ?? true;
+
+      if (enablePos) {
+        final String? posJson = prefs.getString('pos_database');
+        if (posJson != null) {
+          final now = DateTime.now();
+          // Match the exact format used in dashboard_windows.dart
+          String todayKey = "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
+
+          Map<String, dynamic> fullPosDb = jsonDecode(posJson);
+          if (fullPosDb.containsKey(todayKey)) {
+            posDataForToday = fullPosDb[todayKey];
+            debugPrint("🛒 Found POS data for today: $posDataForToday");
+          }
+        }
+      }
+
+      // 2. Read every single .scb file in the folder (and subfolders)
       FolderScannerService scanner = FolderScannerService();
       List<PeopleCount> allHistoricalData = await scanner.loadScbDataFromFolder(folderPath);
 
@@ -89,19 +116,19 @@ class FirebaseSyncService {
         return;
       }
 
-      // 2. Group the massive list of raw data by camera (doorName)
+      // 3. Group the massive list of raw data by camera (doorName)
       Map<String, List<PeopleCount>> allDataPerDoor = {};
       for (var data in allHistoricalData) {
         allDataPerDoor.putIfAbsent(data.doorName, () => []);
         allDataPerDoor[data.doorName]!.add(data);
       }
 
-      // 3. Pass ALL the data into our perfected upload logic!
+      // 4. Pass ALL the data into our perfected upload logic!
       await uploadDailySummary(
         perDoorData: allDataPerDoor,
         totalIn: 0,  // The logic inside dynamically recalculates this anyway!
         totalOut: 0,
-        posDataForToday: null, // POS data isn't needed for older historical days
+        posDataForToday: posDataForToday, // 🚀 FIXED: Now passing actual POS data!
       );
 
       debugPrint("✅ Full historical folder sync complete!");

@@ -53,28 +53,31 @@ class _StoreProfileScreenState extends State<StoreProfileScreen> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('store_name', _nameCtrl.text.trim());
     await prefs.setString('store_location', _locCtrl.text.trim());
+
+    // 🚀 FIX: We keep the raw typed text for SharedPreferences so it looks nice in the UI...
     await prefs.setString('firebase_client_id', _clientIdCtrl.text.trim());
     await prefs.setBool('sync_individual_cameras', _syncIndividualCameras);
-    await prefs.setBool('enable_pos_features', _enablePosFeatures); // 🚀 Save locally
+    await prefs.setBool('enable_pos_features', _enablePosFeatures);
 
     if (_tempLogoPath != null) {
       await prefs.setString('store_logo_path', _tempLogoPath!);
     }
 
-    // 🚀 NEW: SYNC STORE MODE TO FIREBASE
-    String clientId = _clientIdCtrl.text.trim();
+    // 🚀 FIX: ...but we sanitize the Client ID for Firebase to prevent duplicates!
+    String rawClientId = _clientIdCtrl.text.trim();
+    String clientId = rawClientId.replaceAll(' ', '_').toLowerCase();
+
     if (clientId.isNotEmpty) {
       try {
-        // Generate the exact same Store ID used by your FirebaseSyncService
         String storeId = "${_nameCtrl.text.trim()}_${_locCtrl.text.trim()}".replaceAll(' ', '_').toLowerCase();
 
         await FirebaseFirestore.instance
-            .collection('clients').doc(clientId)
+            .collection('clients').doc(clientId) // This will now always be "boubaaya"
             .collection('stores').doc(storeId)
             .set({
           'brand': _nameCtrl.text.trim(),
           'location': _locCtrl.text.trim(),
-          'enable_pos_features': _enablePosFeatures, // Tell the Cloud Dashboard the mode!
+          'enable_pos_features': _enablePosFeatures,
           'last_updated_profile': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
 

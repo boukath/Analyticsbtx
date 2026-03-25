@@ -186,8 +186,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
     _checkFtpStatus();
     _startSecurityMonitor();
     _loadCameraIps();
-
-    FirebaseSyncService.startScheduledSync(_performFirebaseSync);
   }
 
   Future<void> _initSystemTray() async {
