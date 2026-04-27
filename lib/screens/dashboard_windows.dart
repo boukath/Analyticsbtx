@@ -26,7 +26,7 @@ import '../services/csv_export_service.dart';
 import 'camera_ftp_setup_screen.dart';
 import 'export_screen.dart';
 import 'developer_screen.dart';
-import 'store_profile_screen.dart'; // 🚀 FIXED: Added the missing import here!
+import 'store_profile_screen.dart';
 import 'package:webview_windows/webview_windows.dart';
 import '../services/firebase_sync_service.dart';
 
@@ -48,11 +48,14 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
   ChartFilter _currentFilter = ChartFilter.hourly;
   DateTimeRange? _selectedDateRange;
 
-  // 🚀 NEW: Flag to toggle between Chart Mode and Table Mode
+  // 🚀 Flag to toggle between Chart Mode and Table Mode
   bool _isTableMode = false;
 
   // 🚀 Flag to toggle POS (Retail) vs Footfall (Mall) mode
   bool _enablePosFeatures = true;
+
+  // 🚀 Flag for Single Entrance (Merge) mode
+  bool _isSingleEntrance = false;
 
   void _showLinkIpDialog(String cameraName) {
     TextEditingController ipController = TextEditingController(text: _cameraIps[cameraName]);
@@ -552,6 +555,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
       _storeLogoPath = prefs.getString('store_logo_path');
 
       _enablePosFeatures = prefs.getBool('enable_pos_features') ?? true;
+      _isSingleEntrance = prefs.getBool('is_single_entrance') ?? false;
     });
   }
 
@@ -1176,7 +1180,8 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
 
   // 🚀 WRAPPER: Decides which table layout to show
   Widget _buildTableView() {
-    bool showMatrix = _selectedCamera == 'All Doors' && _availableCameras.length > 2 && !_isCompareMode;
+    // 🚀 FIX: Also respect the _isSingleEntrance flag here
+    bool showMatrix = !_isSingleEntrance && _selectedCamera == 'All Doors' && _availableCameras.length > 2 && !_isCompareMode;
 
     if (showMatrix) {
       return _buildMatrixTable(); // Shows the horizontal pivot table for 40+ cameras
@@ -1491,10 +1496,13 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
                         else ...[
                           _buildSmartInsights(),
                           const SizedBox(height: 24),
+
                           _buildHeroChart(),
-                          const SizedBox(height: 32),
+
+                          // 🚀 CONDITIONAL SPACING & ZONE SELECTOR
+                          if (!_isSingleEntrance) const SizedBox(height: 32),
                           _buildZoneSelector(),
-                          const SizedBox(height: 32),
+                          if (!_isSingleEntrance) const SizedBox(height: 32),
 
                           _buildLiveFeedSection(),
 
@@ -1655,7 +1663,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
           _buildLanguageToggle(),
           const SizedBox(width: 32),
 
-          // 🔒 View only - Removed GestureDetector to prevent unauthorized changes
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             child: Row(
@@ -1865,7 +1872,8 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
     int totalVisitors = (_totalIn + _totalOut) ~/ 2;
     List<LineChartBarData> chartLines = [];
 
-    bool showPerDoor = _selectedCamera == 'All Doors' && _availableCameras.length > 2 && !_isCompareMode;
+    // 🚀 FIX: Also respect the _isSingleEntrance flag here
+    bool showPerDoor = !_isSingleEntrance && _selectedCamera == 'All Doors' && _availableCameras.length > 2 && !_isCompareMode;
 
     List<List<Color>> luxuryGradients = [
       [const Color(0xFF00C6FF), const Color(0xFF0072FF)],
@@ -2204,6 +2212,11 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
   }
 
   Widget _buildZoneSelector() {
+    // 🚀 NEW: Hide the entire camera selector if Single Entrance mode is active!
+    if (_isSingleEntrance) {
+      return const SizedBox.shrink();
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [

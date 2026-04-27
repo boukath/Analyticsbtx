@@ -31,6 +31,8 @@ class PdfExportService {
     required double upt,
     // 🚀 NEW: MALL VS RETAIL MODE FLAG
     required bool enablePosFeatures,
+    // 🚀 NEW: SINGLE ENTRANCE FLAG
+    required bool isSingleEntrance,
   }) async {
     // 1. Create a new PDF document
     final pdf = pw.Document(
@@ -187,13 +189,22 @@ class PdfExportService {
               headerStyle: pw.TextStyle(color: textLight, fontWeight: pw.FontWeight.bold, fontSize: 10),
               cellStyle: pw.TextStyle(color: textDark, fontSize: 10),
               rowDecoration: const pw.BoxDecoration(border: pw.Border(bottom: pw.BorderSide(color: PdfColors.grey200, width: 0.5))),
-              headers: ['Date', 'Time', 'Door/Camera', 'Entrances (IN)', 'Exits (OUT)', 'Total Visitors'],
+              // 🚀 DYNAMIC HEADERS: Hide the Door column if Single Entrance!
+              headers: [
+                'Date',
+                'Time',
+                if (!isSingleEntrance) 'Door/Camera',
+                'Entrances (IN)',
+                'Exits (OUT)',
+                'Total Visitors'
+              ],
               data: data.map((item) {
                 int visitors = (item.inCount + item.outCount) ~/ 2;
+                // 🚀 DYNAMIC ROWS: Conditionally drop the camera name, and use the passed variable when showing it!
                 return [
                   item.date,
                   item.time,
-                  item.doorName,
+                  if (!isSingleEntrance) cameraName,
                   item.inCount.toString(),
                   item.outCount.toString(),
                   visitors.toString(),

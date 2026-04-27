@@ -50,8 +50,9 @@ class _ExportScreenState extends State<ExportScreen> {
   late DateTimeRange _selectedDateRange;
   ChartFilter _currentFilter = ChartFilter.hourly;
 
-  // 🚀 NEW: State to hold the POS Feature toggle
+  // 🚀 NEW: State to hold the toggles
   bool _enablePosFeatures = true;
+  bool _isSingleEntrance = false; // 🚀 NEW: Track single entrance mode
 
   // --- Theme Colors ---
   final Color _bgDark = const Color(0xFF0F172A);
@@ -75,11 +76,11 @@ class _ExportScreenState extends State<ExportScreen> {
         end: DateTime(now.year, now.month, now.day)
     );
 
-    // 🚀 Fetch the Retail Mode toggle immediately
+    // 🚀 Fetch settings immediately
     _loadSettings();
   }
 
-  // 🚀 NEW: Load the global settings to see if POS should be visible
+  // 🚀 NEW: Load the global settings to see if POS and Single Entrance should be active
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
@@ -87,6 +88,14 @@ class _ExportScreenState extends State<ExportScreen> {
       _enablePosFeatures = kIsWeb
           ? (prefs.getBool('web_enable_pos_features') ?? true)
           : (prefs.getBool('enable_pos_features') ?? true);
+
+      // 🚀 NEW: Load Single Entrance Mode
+      _isSingleEntrance = prefs.getBool('is_single_entrance') ?? false;
+
+      // If single entrance is forced, lock the camera selection to global!
+      if (_isSingleEntrance) {
+        _selectedCamera = 'All Doors';
+      }
     });
   }
 
@@ -249,7 +258,8 @@ class _ExportScreenState extends State<ExportScreen> {
           conversionRate: conversionRate,
           avgBasket: avgBasket,
           upt: upt,
-          enablePosFeatures: _enablePosFeatures, // 🚀 NEW: Pass the boolean to the PDF Builder!
+          enablePosFeatures: _enablePosFeatures,
+          isSingleEntrance: _isSingleEntrance, // 🚀 NEW: Passed flag to PDF
         );
       } else {
         await CsvExportService.generateAndSaveCsv(
@@ -266,7 +276,8 @@ class _ExportScreenState extends State<ExportScreen> {
           conversionRate: conversionRate,
           avgBasket: avgBasket,
           upt: upt,
-          enablePosFeatures: _enablePosFeatures, // 🚀 NEW: Pass the boolean to the CSV Builder!
+          enablePosFeatures: _enablePosFeatures,
+          isSingleEntrance: _isSingleEntrance, // 🚀 NEW: Passed flag to CSV
         );
       }
 
@@ -384,22 +395,26 @@ class _ExportScreenState extends State<ExportScreen> {
                 ),
                 const SizedBox(height: 48),
 
-                Text(widget.isFrench ? '1. CHOISIR LA CAMÉRA' : '1. SELECT CAMERA', style: TextStyle(color: _accentCyan, fontWeight: FontWeight.bold, letterSpacing: 1)),
-                const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                  decoration: BoxDecoration(color: _cardDark, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.white.withOpacity(0.1))),
-                  child: DropdownButtonHideUnderline(
-                    child: DropdownButton<String>(
-                      isExpanded: true, dropdownColor: _cardDark, value: _selectedCamera, icon: const Icon(Icons.videocam, color: Colors.white54), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
-                      items: widget.availableCameras.map((String cam) => DropdownMenuItem<String>(value: cam, child: Text(cam == 'All Doors' ? (widget.isFrench ? 'Toutes les Portes' : 'All Doors') : cam.toUpperCase()))).toList(),
-                      onChanged: (String? val) { if (val != null) setState(() => _selectedCamera = val); },
+                // 🚀 Conditionally show the Camera Selector
+                if (!_isSingleEntrance) ...[
+                  Text(widget.isFrench ? '1. CHOISIR LA CAMÉRA' : '1. SELECT CAMERA', style: TextStyle(color: _accentCyan, fontWeight: FontWeight.bold, letterSpacing: 1)),
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    decoration: BoxDecoration(color: _cardDark, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.white.withOpacity(0.1))),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        isExpanded: true, dropdownColor: _cardDark, value: _selectedCamera, icon: const Icon(Icons.videocam, color: Colors.white54), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                        items: widget.availableCameras.map((String cam) => DropdownMenuItem<String>(value: cam, child: Text(cam == 'All Doors' ? (widget.isFrench ? 'Toutes les Portes' : 'All Doors') : cam.toUpperCase()))).toList(),
+                        onChanged: (String? val) { if (val != null) setState(() => _selectedCamera = val); },
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 32),
+                  const SizedBox(height: 32),
+                ],
 
-                Text(widget.isFrench ? '2. PLAGE DE DATES' : '2. DATE RANGE', style: TextStyle(color: _accentCyan, fontWeight: FontWeight.bold, letterSpacing: 1)),
+                // 🚀 Dynamic numbering: If Single Entrance is ON, this becomes step 1!
+                Text(widget.isFrench ? (_isSingleEntrance ? '1. PLAGE DE DATES' : '2. PLAGE DE DATES') : (_isSingleEntrance ? '1. DATE RANGE' : '2. DATE RANGE'), style: TextStyle(color: _accentCyan, fontWeight: FontWeight.bold, letterSpacing: 1)),
                 const SizedBox(height: 12),
 
                 Wrap(
@@ -447,7 +462,8 @@ class _ExportScreenState extends State<ExportScreen> {
                 ),
                 const SizedBox(height: 32),
 
-                Text(widget.isFrench ? '3. INTERVALLE DE DONNÉES' : '3. DATA INTERVAL', style: TextStyle(color: _accentCyan, fontWeight: FontWeight.bold, letterSpacing: 1)),
+                // 🚀 Dynamic numbering: If Single Entrance is ON, this becomes step 2!
+                Text(widget.isFrench ? (_isSingleEntrance ? '2. INTERVALLE DE DONNÉES' : '3. INTERVALLE DE DONNÉES') : (_isSingleEntrance ? '2. DATA INTERVAL' : '3. DATA INTERVAL'), style: TextStyle(color: _accentCyan, fontWeight: FontWeight.bold, letterSpacing: 1)),
                 const SizedBox(height: 12),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),

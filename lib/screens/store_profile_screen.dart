@@ -4,7 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:cloud_firestore/cloud_firestore.dart'; // 🚀 NEW: Import Firestore
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class StoreProfileScreen extends StatefulWidget {
   final bool isFrench;
@@ -22,8 +22,14 @@ class _StoreProfileScreenState extends State<StoreProfileScreen> {
 
   String? _tempLogoPath;
   bool _isLoading = true;
+
+  // These booleans remain so the rest of your app still works perfectly
   bool _syncIndividualCameras = false;
-  bool _enablePosFeatures = true; // 🚀 NEW: State for POS Features
+  bool _enablePosFeatures = true;
+  bool _isSingleEntrance = false;
+
+  // 🚀 NEW: State for the currently selected dropdown mode
+  String _selectedMode = 'retail_multi';
 
   final Color _bgDark = const Color(0xFF0F172A);
   final Color _cardDark = const Color(0xFF1E293B);
@@ -43,9 +49,48 @@ class _StoreProfileScreenState extends State<StoreProfileScreen> {
       _locCtrl.text = prefs.getString('store_location') ?? "MAIN BRANCH";
       _clientIdCtrl.text = prefs.getString('firebase_client_id') ?? '';
       _tempLogoPath = prefs.getString('store_logo_path');
-      _syncIndividualCameras = prefs.getBool('sync_individual_cameras') ?? false;
-      _enablePosFeatures = prefs.getBool('enable_pos_features') ?? true; // 🚀 Load toggle
+
+      // Load the booleans
+      _syncIndividualCameras = prefs.getBool('sync_individual_cameras') ?? true;
+      _enablePosFeatures = prefs.getBool('enable_pos_features') ?? true;
+      _isSingleEntrance = prefs.getBool('is_single_entrance') ?? false;
+
+      // 🚀 NEW: Deduce the dropdown mode based on loaded booleans to keep the UI in sync
+      if (_enablePosFeatures && !_isSingleEntrance) {
+        _selectedMode = 'retail_multi';
+      } else if (_enablePosFeatures && _isSingleEntrance) {
+        _selectedMode = 'retail_single';
+      } else if (!_enablePosFeatures && !_isSingleEntrance) {
+        _selectedMode = 'mall_multi';
+      } else if (!_enablePosFeatures && _isSingleEntrance) {
+        _selectedMode = 'mall_single';
+      }
+
       _isLoading = false;
+    });
+  }
+
+  // 🚀 NEW: Helper function to apply safe boolean rules when a mode is selected
+  void _applyModeSettings(String mode) {
+    setState(() {
+      _selectedMode = mode;
+      if (mode == 'retail_multi') {
+        _enablePosFeatures = true;
+        _isSingleEntrance = false;
+        _syncIndividualCameras = true;
+      } else if (mode == 'retail_single') {
+        _enablePosFeatures = true;
+        _isSingleEntrance = true;
+        _syncIndividualCameras = false;
+      } else if (mode == 'mall_multi') {
+        _enablePosFeatures = false;
+        _isSingleEntrance = false;
+        _syncIndividualCameras = true;
+      } else if (mode == 'mall_single') {
+        _enablePosFeatures = false;
+        _isSingleEntrance = true;
+        _syncIndividualCameras = false;
+      }
     });
   }
 
@@ -53,17 +98,17 @@ class _StoreProfileScreenState extends State<StoreProfileScreen> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('store_name', _nameCtrl.text.trim());
     await prefs.setString('store_location', _locCtrl.text.trim());
-
-    // 🚀 FIX: We keep the raw typed text for SharedPreferences so it looks nice in the UI...
     await prefs.setString('firebase_client_id', _clientIdCtrl.text.trim());
+
+    // Save the booleans based on the selected mode
     await prefs.setBool('sync_individual_cameras', _syncIndividualCameras);
     await prefs.setBool('enable_pos_features', _enablePosFeatures);
+    await prefs.setBool('is_single_entrance', _isSingleEntrance);
 
     if (_tempLogoPath != null) {
       await prefs.setString('store_logo_path', _tempLogoPath!);
     }
 
-    // 🚀 FIX: ...but we sanitize the Client ID for Firebase to prevent duplicates!
     String rawClientId = _clientIdCtrl.text.trim();
     String clientId = rawClientId.replaceAll(' ', '_').toLowerCase();
 
@@ -72,12 +117,14 @@ class _StoreProfileScreenState extends State<StoreProfileScreen> {
         String storeId = "${_nameCtrl.text.trim()}_${_locCtrl.text.trim()}".replaceAll(' ', '_').toLowerCase();
 
         await FirebaseFirestore.instance
-            .collection('clients').doc(clientId) // This will now always be "boubaaya"
+            .collection('clients').doc(clientId)
             .collection('stores').doc(storeId)
             .set({
           'brand': _nameCtrl.text.trim(),
           'location': _locCtrl.text.trim(),
           'enable_pos_features': _enablePosFeatures,
+          'is_single_entrance': _isSingleEntrance,
+          'app_mode': _selectedMode,
           'last_updated_profile': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
 
@@ -210,61 +257,62 @@ class _StoreProfileScreenState extends State<StoreProfileScreen> {
                 ),
                 const SizedBox(height: 24),
 
-                // 🚀 NEW: The Retail/Mall Mode Toggle
+                // 🚀 The App Mode Dropdown
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  margin: const EdgeInsets.only(bottom: 16),
                   decoration: BoxDecoration(
                     color: _bgDark,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: _enablePosFeatures ? _accentCyan : Colors.white.withOpacity(0.1)),
+                    border: Border.all(color: _accentCyan),
                   ),
-                  child: SwitchListTile(
-                    activeColor: _accentCyan,
-                    title: Text(
-                      widget.isFrench ? 'Mode Retail (Caisse)' : 'Retail Mode (POS & Sales)',
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                  child: DropdownButtonFormField<String>(
+                    value: _selectedMode,
+                    dropdownColor: _cardDark,
+                    iconEnabledColor: _accentCyan,
+                    decoration: InputDecoration(
+                      labelText: widget.isFrench ? 'Mode de Fonctionnement' : 'Operating Mode',
+                      labelStyle: const TextStyle(color: Colors.white54),
+                      border: InputBorder.none,
+                      prefixIcon: Icon(Icons.settings_suggest, color: _accentCyan),
                     ),
-                    subtitle: Text(
-                      widget.isFrench
-                          ? 'Désactiver pour les centres commerciaux (Trafic uniquement)'
-                          : 'Disable for Malls/Buildings (Traffic only)',
-                      style: const TextStyle(color: Colors.white54, fontSize: 12),
-                    ),
-                    value: _enablePosFeatures,
-                    onChanged: (bool value) {
-                      setState(() => _enablePosFeatures = value);
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                    items: [
+                      DropdownMenuItem(
+                        value: 'retail_multi',
+                        child: Text(widget.isFrench ? 'Retail (Caisse) - Multi Caméras' : 'Retail (POS) - Multi Camera'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'retail_single',
+                        child: Text(widget.isFrench ? 'Retail (Caisse) - Entrée Unique' : 'Retail (POS) - Single Entrance'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'mall_multi',
+                        child: Text(widget.isFrench ? 'Mall (Trafic) - Multi Caméras' : 'Mall (Traffic) - Multi Camera'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'mall_single',
+                        child: Text(widget.isFrench ? 'Mall (Trafic) - Entrée Unique' : 'Mall (Traffic) - Single Entrance'),
+                      ),
+                    ],
+                    onChanged: (String? newValue) {
+                      if (newValue != null) {
+                        _applyModeSettings(newValue);
+                      }
                     },
                   ),
                 ),
 
-                // The Database Optimization Toggle
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: _bgDark,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: _syncIndividualCameras ? _accentCyan : Colors.white.withOpacity(0.1)),
-                  ),
-                  child: SwitchListTile(
-                    activeColor: _accentCyan,
-                    title: Text(
-                      widget.isFrench ? 'Synchroniser chaque caméra' : 'Sync Individual Cameras',
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                    ),
-                    subtitle: Text(
-                      widget.isFrench
-                          ? 'Désactivez pour fusionner les données et économiser la base de données.'
-                          : 'Turn off to merge data and save Firebase database space.',
-                      style: const TextStyle(color: Colors.white54, fontSize: 12),
-                    ),
-                    value: _syncIndividualCameras,
-                    onChanged: (bool value) {
-                      setState(() => _syncIndividualCameras = value);
-                    },
+                // Hint text explaining the selected mode
+                Padding(
+                  padding: const EdgeInsets.only(top: 12, bottom: 24),
+                  child: Text(
+                    _selectedMode.contains('single')
+                        ? (widget.isFrench ? "Mode fusionné : Tout le trafic est combiné en une seule entrée." : "Merged Mode: All traffic is combined into one global view.")
+                        : (widget.isFrench ? "Mode détaillé : Chaque caméra est synchronisée séparément." : "Detailed Mode: Every camera synchronizes data separately."),
+                    style: const TextStyle(color: Colors.white54, fontSize: 12, fontStyle: FontStyle.italic),
+                    textAlign: TextAlign.center,
                   ),
                 ),
-                const SizedBox(height: 40),
 
                 // Save Button
                 SizedBox(

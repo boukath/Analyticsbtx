@@ -27,6 +27,8 @@ class CsvExportService {
     required double upt,
     // 🚀 NEW: MALL VS RETAIL MODE FLAG
     required bool enablePosFeatures,
+    // 🚀 NEW: SINGLE ENTRANCE FLAG
+    required bool isSingleEntrance,
   }) async {
     try {
       StringBuffer csv = StringBuffer();
@@ -71,13 +73,26 @@ class CsvExportService {
 
       // 🚀 4. DETAILED DATA LOG
       csv.writeln("--- 📈 DETAILED DATA LOG ---");
-      // Clean, well-spaced headers
-      csv.writeln("Date, Time, Door/Camera, Entrances (IN), Exits (OUT), Net Visitors");
+
+      // 🚀 DYNAMIC HEADERS: Hide the Door column if Single Entrance!
+      if (isSingleEntrance) {
+        csv.writeln("Date, Time, Entrances (IN), Exits (OUT), Net Visitors");
+      } else {
+        // Clean, well-spaced headers
+        csv.writeln("Date, Time, Door/Camera, Entrances (IN), Exits (OUT), Net Visitors");
+      }
 
       // Add Rows safely wrapped in quotes to prevent layout breakage
       for (var item in data) {
         int visitors = (item.inCount + item.outCount) ~/ 2;
-        csv.writeln("\"${item.date}\", \"${item.time}\", \"${item.doorName}\", ${item.inCount}, ${item.outCount}, $visitors");
+
+        // 🚀 DYNAMIC ROWS: Use correct formatting
+        if (isSingleEntrance) {
+          csv.writeln("\"${item.date}\", \"${item.time}\", ${item.inCount}, ${item.outCount}, $visitors");
+        } else {
+          // 🚀 FIX: Use `cameraName` instead of `item.doorName`
+          csv.writeln("\"${item.date}\", \"${item.time}\", \"$cameraName\", ${item.inCount}, ${item.outCount}, $visitors");
+        }
       }
 
       csv.writeln("");
