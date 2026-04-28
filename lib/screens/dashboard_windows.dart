@@ -422,7 +422,8 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
                   ElevatedButton(
                     style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent, foregroundColor: Colors.white),
                     onPressed: () {
-                      if (passCtrl.text == "Boitexinfo") {
+                      // 🚀 UPDATED: Accepting bi2026 and boitexinfodev to silence network alerts
+                      if (passCtrl.text == "Boitexinfo" || passCtrl.text == "bi2026" || passCtrl.text == "boitexinfodev") {
                         _isAlertSilenced = true;
                         _isAlertDialogOpen = false;
                         Navigator.of(c).pop();
@@ -447,104 +448,30 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
     });
   }
 
-  void _showDeveloperPasswordDialog() {
-    TextEditingController passCtrl = TextEditingController();
-    String errorMessage = "";
-
-    showDialog(
-        context: context,
-        builder: (BuildContext dialogContext) {
-          return StatefulBuilder(
-              builder: (context, setDialogState) {
-
-                void verifyPassword() async {
-                  if (passCtrl.text == "boitexinfodev") {
-                    Navigator.pop(dialogContext);
-
-                    await Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (context) => DeveloperScreen(
-                              isFrench: _isFrench,
-                              onSelectDataSource: () {
-                                Navigator.pop(context);
-                                _pickFolderAndLoadData();
-                              },
-                              onForceSync: () {
-                                if (_rawData.isNotEmpty) {
-                                  _performFirebaseSync();
-                                }
-                              },
-                              currentFolderPath: _selectedFolderPath,
-                            )
-                        )
-                    );
-
-                    _loadCameraIps();
-                    _checkFtpStatus();
-                    if (mounted) setState(() {});
-                  } else {
-                    setDialogState(() {
-                      errorMessage = _isFrench ? "Mot de passe incorrect !" : "Incorrect Passcode!";
-                    });
-                  }
+  // 🚀 UPDATED: Directly open the Developer Screen (The login is inside it now!)
+  Future<void> _openDeveloperScreen() async {
+    await Navigator.push(
+        context,
+        MaterialPageRoute(
+            builder: (context) => DeveloperScreen(
+              isFrench: _isFrench,
+              onSelectDataSource: () {
+                Navigator.pop(context);
+                _pickFolderAndLoadData();
+              },
+              onForceSync: () {
+                if (_rawData.isNotEmpty) {
+                  _performFirebaseSync();
                 }
-
-                return AlertDialog(
-                  backgroundColor: _cardDark,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      side: BorderSide(color: _accentCyan.withOpacity(0.5))
-                  ),
-                  title: Row(
-                    children: [
-                      Icon(Icons.lock_outline, color: _accentCyan),
-                      const SizedBox(width: 12),
-                      Text(
-                          _isFrench ? "Accès Développeur" : "Developer Access",
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)
-                      ),
-                    ],
-                  ),
-                  content: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        _isFrench ? "Veuillez entrer le mot de passe :" : "Please enter the passcode:",
-                        style: const TextStyle(color: Colors.white70, fontSize: 14),
-                      ),
-                      const SizedBox(height: 16),
-                      TextField(
-                        controller: passCtrl,
-                        obscureText: true,
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, letterSpacing: 2),
-                        decoration: InputDecoration(
-                          filled: true,
-                          fillColor: _bgDark,
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
-                          errorText: errorMessage.isNotEmpty ? errorMessage : null,
-                        ),
-                        onSubmitted: (_) => verifyPassword(),
-                      ),
-                    ],
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(dialogContext),
-                      child: Text(_isFrench ? "ANNULER" : "CANCEL", style: const TextStyle(color: Colors.white54)),
-                    ),
-                    ElevatedButton(
-                      style: ElevatedButton.styleFrom(backgroundColor: _accentCyan, foregroundColor: Colors.black),
-                      onPressed: verifyPassword,
-                      child: Text(_isFrench ? "VALIDER" : "SUBMIT", style: const TextStyle(fontWeight: FontWeight.bold)),
-                    ),
-                  ],
-                );
-              }
-          );
-        }
+              },
+              currentFolderPath: _selectedFolderPath,
+            )
+        )
     );
+
+    _loadCameraIps();
+    _checkFtpStatus();
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadStoreProfile() async {
@@ -1180,7 +1107,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
 
   // 🚀 WRAPPER: Decides which table layout to show
   Widget _buildTableView() {
-    // 🚀 FIX: Also respect the _isSingleEntrance flag here
     bool showMatrix = !_isSingleEntrance && _selectedCamera == 'All Doors' && _availableCameras.length > 2 && !_isCompareMode;
 
     if (showMatrix) {
@@ -1426,7 +1352,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
                   Expanded(child: Text(_compareTotalIn.toString(), textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.bold, fontSize: 14))),
                   Expanded(child: Text(_compareTotalOut.toString(), textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.bold, fontSize: 14))),
                 ],
-                // Calculating Grand Total Visitors -> (Total In + Total Out) / 2
                 Expanded(child: Text(((_totalIn + _totalOut) ~/ 2).toString(), textAlign: TextAlign.right, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 14))),
               ],
             ),
@@ -1499,7 +1424,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
 
                           _buildHeroChart(),
 
-                          // 🚀 CONDITIONAL SPACING & ZONE SELECTOR
                           if (!_isSingleEntrance) const SizedBox(height: 32),
                           _buildZoneSelector(),
                           if (!_isSingleEntrance) const SizedBox(height: 32),
@@ -1577,7 +1501,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
                     _isFrench ? 'Développeur' : 'Developer',
                     iconColor: _isIpMismatch ? Colors.redAccent : null,
                     textColor: _isIpMismatch ? Colors.redAccent : null,
-                    onTap: _showDeveloperPasswordDialog,
+                    onTap: _openDeveloperScreen, // 🚀 UPDATED: Calls the direct open method
                   ),
 
                   const SizedBox(height: 20),
@@ -1872,7 +1796,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
     int totalVisitors = (_totalIn + _totalOut) ~/ 2;
     List<LineChartBarData> chartLines = [];
 
-    // 🚀 FIX: Also respect the _isSingleEntrance flag here
     bool showPerDoor = !_isSingleEntrance && _selectedCamera == 'All Doors' && _availableCameras.length > 2 && !_isCompareMode;
 
     List<List<Color>> luxuryGradients = [
@@ -2038,7 +1961,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // 🚀 NEW: View Toggle (Chart / Table)
                       Container(
                         decoration: BoxDecoration(
                             color: Colors.white.withOpacity(0.05),
@@ -2062,7 +1984,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
                       ),
                       const SizedBox(width: 12),
 
-                      // Existing Dropdown
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
                         decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.white.withOpacity(0.1))),
@@ -2110,7 +2031,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
 
           SizedBox(
             height: 380,
-            // 🚀 NEW: Decide what to render based on the toggle state!
             child: _isTableMode ? _buildTableView() : LineChart(
               LineChartData(
                 minY: 0,
@@ -2212,7 +2132,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
   }
 
   Widget _buildZoneSelector() {
-    // 🚀 NEW: Hide the entire camera selector if Single Entrance mode is active!
     if (_isSingleEntrance) {
       return const SizedBox.shrink();
     }
@@ -2275,48 +2194,41 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
     );
   }
 
-  // 🚀 SMART BENTO GRID: Switches based on _enablePosFeatures
   Widget _buildBentoGrid(bool isDesktop) {
     List<Widget> gridItems = [];
 
     if (!_enablePosFeatures) {
-      // ==========================================
-      // 🏢 MALL / BUILDING MODE (Pure Footfall)
-      // ==========================================
       gridItems = [
         _buildBentoCard(
           title: _isFrench ? 'TOTAL ENTRÉES' : 'TOTAL IN',
           value: '$_totalIn',
           unit: _isFrench ? 'PERS' : 'PAX',
           icon: Icons.login_rounded,
-          color: const Color(0xFF38EF7D), // Mint Green
+          color: const Color(0xFF38EF7D),
         ),
         _buildBentoCard(
           title: _isFrench ? 'TOTAL SORTIES' : 'TOTAL OUT',
           value: '$_totalOut',
           unit: _isFrench ? 'PERS' : 'PAX',
           icon: Icons.logout_rounded,
-          color: const Color(0xFFFF512F), // Sunset Orange
+          color: const Color(0xFFFF512F),
         ),
         _buildBentoCard(
           title: _isFrench ? 'HEURE DE POINTE' : 'PEAK HOUR',
           value: _peakHour,
           unit: 'TIME',
           icon: Icons.access_time_filled_rounded,
-          color: const Color(0xFF00C6FF), // Cyan
+          color: const Color(0xFF00C6FF),
         ),
         _buildBentoCard(
           title: _isFrench ? 'OCCUPATION' : 'OCCUPANCY',
           value: '$_occupancy',
           unit: _isFrench ? 'ACTUEL' : 'NOW',
           icon: Icons.people_alt_rounded,
-          color: const Color(0xFF8E2DE2), // Deep Purple
+          color: const Color(0xFF8E2DE2),
         ),
       ];
     } else {
-      // ==========================================
-      // 🛍️ RETAIL MODE (Financials & POS)
-      // ==========================================
       int totalVisitors = (_totalIn + _totalOut) ~/ 2;
       double conversionRate = totalVisitors > 0 ? (_currentClients / totalVisitors) * 100 : 0.0;
       double avgBasket = _currentClients > 0 ? (_currentCa / _currentClients) : 0.0;
