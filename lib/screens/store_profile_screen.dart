@@ -19,6 +19,8 @@ class _StoreProfileScreenState extends State<StoreProfileScreen> {
   final TextEditingController _nameCtrl = TextEditingController();
   final TextEditingController _locCtrl = TextEditingController();
   final TextEditingController _clientIdCtrl = TextEditingController();
+  // 🚀 NEW: Controller for the ERP Link
+  final TextEditingController _erpLinkCtrl = TextEditingController();
 
   String? _tempLogoPath;
   bool _isLoading = true;
@@ -28,7 +30,7 @@ class _StoreProfileScreenState extends State<StoreProfileScreen> {
   bool _enablePosFeatures = true;
   bool _isSingleEntrance = false;
 
-  // 🚀 NEW: State for the currently selected dropdown mode
+  // State for the currently selected dropdown mode
   String _selectedMode = 'retail_multi';
 
   final Color _bgDark = const Color(0xFF0F172A);
@@ -48,6 +50,8 @@ class _StoreProfileScreenState extends State<StoreProfileScreen> {
       _nameCtrl.text = prefs.getString('store_name') ?? "My Store";
       _locCtrl.text = prefs.getString('store_location') ?? "MAIN BRANCH";
       _clientIdCtrl.text = prefs.getString('firebase_client_id') ?? '';
+      // 🚀 NEW: Load the ERP link
+      _erpLinkCtrl.text = prefs.getString('erp_portal_link') ?? '';
       _tempLogoPath = prefs.getString('store_logo_path');
 
       // Load the booleans
@@ -55,7 +59,7 @@ class _StoreProfileScreenState extends State<StoreProfileScreen> {
       _enablePosFeatures = prefs.getBool('enable_pos_features') ?? true;
       _isSingleEntrance = prefs.getBool('is_single_entrance') ?? false;
 
-      // 🚀 NEW: Deduce the dropdown mode based on loaded booleans to keep the UI in sync
+      // Deduce the dropdown mode based on loaded booleans to keep the UI in sync
       if (_enablePosFeatures && !_isSingleEntrance) {
         _selectedMode = 'retail_multi';
       } else if (_enablePosFeatures && _isSingleEntrance) {
@@ -70,7 +74,7 @@ class _StoreProfileScreenState extends State<StoreProfileScreen> {
     });
   }
 
-  // 🚀 NEW: Helper function to apply safe boolean rules when a mode is selected
+  // Helper function to apply safe boolean rules when a mode is selected
   void _applyModeSettings(String mode) {
     setState(() {
       _selectedMode = mode;
@@ -99,6 +103,8 @@ class _StoreProfileScreenState extends State<StoreProfileScreen> {
     await prefs.setString('store_name', _nameCtrl.text.trim());
     await prefs.setString('store_location', _locCtrl.text.trim());
     await prefs.setString('firebase_client_id', _clientIdCtrl.text.trim());
+    // 🚀 NEW: Save the ERP link locally
+    await prefs.setString('erp_portal_link', _erpLinkCtrl.text.trim());
 
     // Save the booleans based on the selected mode
     await prefs.setBool('sync_individual_cameras', _syncIndividualCameras);
@@ -125,6 +131,8 @@ class _StoreProfileScreenState extends State<StoreProfileScreen> {
           'enable_pos_features': _enablePosFeatures,
           'is_single_entrance': _isSingleEntrance,
           'app_mode': _selectedMode,
+          // 🚀 NEW: Sync the ERP link to Firebase
+          'erp_portal_link': _erpLinkCtrl.text.trim(),
           'last_updated_profile': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
 
@@ -255,9 +263,50 @@ class _StoreProfileScreenState extends State<StoreProfileScreen> {
                     ],
                   ),
                 ),
+                const SizedBox(height: 16),
+
+                // 🚀 NEW: ERP Integration Link
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                      color: Colors.purpleAccent.withOpacity(0.05),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.purpleAccent.withOpacity(0.3))
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                          widget.isFrench ? "Intégration ERP & Interventions" : "ERP Integration & Interventions",
+                          style: const TextStyle(color: Colors.purpleAccent, fontWeight: FontWeight.bold, fontSize: 12)
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _erpLinkCtrl,
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14),
+                        decoration: InputDecoration(
+                          labelText: widget.isFrench ? 'Lien Portail ERP (Optionnel)' : 'ERP Portal Link (Optional)',
+                          hintText: 'https://app.boitexinfo.com/?sid=...',
+                          hintStyle: const TextStyle(color: Colors.white24),
+                          labelStyle: const TextStyle(color: Colors.white54, fontSize: 12),
+                          filled: true, fillColor: _bgDark,
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                          prefixIcon: const Icon(Icons.link_rounded, color: Colors.purpleAccent),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                          widget.isFrench
+                              ? "Collez ici le lien exact généré par votre ERP pour ce magasin."
+                              : "Paste the exact link generated by your ERP for this store here.",
+                          style: const TextStyle(color: Colors.white38, fontSize: 11, fontStyle: FontStyle.italic)
+                      ),
+                    ],
+                  ),
+                ),
                 const SizedBox(height: 24),
 
-                // 🚀 The App Mode Dropdown
+                // The App Mode Dropdown
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   decoration: BoxDecoration(

@@ -14,6 +14,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 // 🚀 Desktop Window and Tray Managers
 import 'package:window_manager/window_manager.dart';
 import 'package:tray_manager/tray_manager.dart';
+import 'package:url_launcher/url_launcher.dart'; // 🚀 Added for ERP Intervention link
 
 import 'cloud_sync_screen.dart';
 import '../services/ftp_service.dart';
@@ -212,6 +213,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
   String _storeName = "My Store";
   String _storeLocation = "MAIN BRANCH";
   String? _storeLogoPath;
+  String _erpPortalLink = ""; // 🚀 NEW: ERP Portal link state
   bool _isCompareMode = false;
   List<PeopleCount> _compareDisplayedData = [];
   int _compareTotalIn = 0;
@@ -490,6 +492,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
     );
     _loadCameraIps();
     _checkFtpStatus();
+    _loadStoreProfile(); // Reload in case it was changed
     if (mounted) setState(() {});
   }
 
@@ -501,6 +504,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
       _storeLogoPath = prefs.getString('store_logo_path');
       _enablePosFeatures = prefs.getBool('enable_pos_features') ?? true;
       _isSingleEntrance = prefs.getBool('is_single_entrance') ?? false;
+      _erpPortalLink = prefs.getString('erp_portal_link') ?? ''; // 🚀 Fetching the saved link
     });
   }
 
@@ -1411,6 +1415,34 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
                   if (_enablePosFeatures)
                     _buildSidebarItem(Icons.point_of_sale_rounded, _isFrench ? 'Saisie de Caisse' : 'POS Entry', onTap: _rawData.isNotEmpty ? _showPosEntryDialog : null),
                   _buildSidebarItem(Icons.download_rounded, _isFrench ? 'Exporter Rapports' : 'Export Reports', onTap: _rawData.isNotEmpty ? _showExportMenu : null),
+
+                  // 🚀 NEW: ERP Intervention Request Button
+                  _buildSidebarItem(
+                      Icons.build_circle_rounded,
+                      _isFrench ? 'Demander Intervention' : 'Request Support',
+                      onTap: () async {
+                        if (_erpPortalLink.isNotEmpty) {
+                          final Uri url = Uri.parse(_erpPortalLink);
+                          if (await canLaunchUrl(url)) {
+                            // mode: LaunchMode.externalApplication is essential on Windows
+                            // so it pops out of the app and opens their default browser!
+                            await launchUrl(url, mode: LaunchMode.externalApplication);
+                          } else {
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text(_isFrench ? "Impossible d'ouvrir le portail ERP." : "Could not open ERP portal."), backgroundColor: Colors.redAccent),
+                              );
+                            }
+                          }
+                        } else {
+                          // Warn if link wasn't set in store profile
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text(_isFrench ? "Lien ERP non configuré dans le Profil du Magasin." : "ERP link not configured in Store Profile."), backgroundColor: Colors.orangeAccent),
+                          );
+                        }
+                      }
+                  ),
+
                   _buildSidebarItem(
                     Icons.developer_mode_rounded,
                     _isFrench ? 'Développeur' : 'Developer',
