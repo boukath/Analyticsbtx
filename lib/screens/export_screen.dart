@@ -54,6 +54,10 @@ class _ExportScreenState extends State<ExportScreen> {
   bool _enablePosFeatures = true;
   bool _isSingleEntrance = false; // 🚀 NEW: Track single entrance mode
 
+  // 🚀 NEW: Time range states for precise hourly export
+  late TimeOfDay _startTime;
+  late TimeOfDay _endTime;
+
   // --- Theme Colors ---
   final Color _bgDark = const Color(0xFF0F172A);
   final Color _cardDark = const Color(0xFF1E293B);
@@ -75,6 +79,10 @@ class _ExportScreenState extends State<ExportScreen> {
         start: DateTime(now.year, now.month, now.day),
         end: DateTime(now.year, now.month, now.day)
     );
+
+    // 🚀 NEW: Initialize default export times using the dashboard's working hours
+    _startTime = TimeOfDay(hour: widget.workingMinuteStart ~/ 60, minute: widget.workingMinuteStart % 60);
+    _endTime = TimeOfDay(hour: widget.workingMinuteEnd ~/ 60, minute: widget.workingMinuteEnd % 60);
 
     // 🚀 Fetch settings immediately
     _loadSettings();
@@ -142,7 +150,11 @@ class _ExportScreenState extends State<ExportScreen> {
       var timeParts = item.time.split(':');
       int hour = timeParts.isNotEmpty ? (int.tryParse(timeParts[0]) ?? 0) : 0;
       int minute = timeParts.length > 1 ? (int.tryParse(timeParts[1]) ?? 0) : 0;
-      if ((hour * 60) + minute < widget.workingMinuteStart || (hour * 60) + minute > widget.workingMinuteEnd) return false;
+
+      // 🚀 CHANGED: Use the local TimeOfDay variables for the exact export range
+      int startMins = _startTime.hour * 60 + _startTime.minute;
+      int endMins = _endTime.hour * 60 + _endTime.minute;
+      if ((hour * 60) + minute < startMins || (hour * 60) + minute > endMins) return false;
 
       var dateParts = item.date.split('/');
       if (dateParts.length != 3) return true;
@@ -218,6 +230,13 @@ class _ExportScreenState extends State<ExportScreen> {
         : _selectedCamera;
 
     String dateRangeStr = sStart == sEnd ? sStart : "$sStart to $sEnd";
+
+    // 🚀 NEW: Append the exact time range to the string if Hourly is selected
+    if (_currentFilter == ChartFilter.hourly) {
+      String sTime = "${_startTime.hour.toString().padLeft(2, '0')}:${_startTime.minute.toString().padLeft(2, '0')}";
+      String eTime = "${_endTime.hour.toString().padLeft(2, '0')}:${_endTime.minute.toString().padLeft(2, '0')}";
+      dateRangeStr += " ($sTime - $eTime)";
+    }
 
     // 5. CROSS-PLATFORM PATH RESOLUTION
     String finalOutputPath = "";
@@ -476,6 +495,85 @@ class _ExportScreenState extends State<ExportScreen> {
                     ),
                   ),
                 ),
+
+                // 🚀 NEW: EXACT TIME RANGE PICKER (ONLY VISIBLE ON HOURLY MODE)
+                if (_currentFilter == ChartFilter.hourly) ...[
+                  const SizedBox(height: 32),
+                  Text(widget.isFrench ? (_isSingleEntrance ? '3. PLAGE HORAIRE EXACTE' : '4. PLAGE HORAIRE EXACTE') : (_isSingleEntrance ? '3. EXACT TIME RANGE' : '4. EXACT TIME RANGE'), style: TextStyle(color: _accentCyan, fontWeight: FontWeight.bold, letterSpacing: 1)),
+                  const SizedBox(height: 12),
+                  Row(
+                      children: [
+                        Expanded(
+                            child: InkWell(
+                                onTap: () async {
+                                  TimeOfDay? picked = await showTimePicker(
+                                      context: context,
+                                      initialTime: _startTime,
+                                      builder: (context, child) => Theme(
+                                          data: ThemeData.dark().copyWith(
+                                              colorScheme: ColorScheme.dark(
+                                                  primary: _accentCyan,
+                                                  onPrimary: Colors.black,
+                                                  surface: _cardDark,
+                                                  onSurface: Colors.white
+                                              )
+                                          ),
+                                          child: child!
+                                      )
+                                  );
+                                  if (picked != null) setState(() => _startTime = picked);
+                                },
+                                child: Container(
+                                    padding: const EdgeInsets.all(20),
+                                    decoration: BoxDecoration(color: _cardDark, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.white.withOpacity(0.1))),
+                                    child: Row(
+                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          Text("${widget.isFrench ? 'Début' : 'Start'}: ${_startTime.hour.toString().padLeft(2, '0')}:${_startTime.minute.toString().padLeft(2, '0')}", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 16)),
+                                          Icon(Icons.access_time, color: _accentCyan)
+                                        ]
+                                    )
+                                )
+                            )
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                            child: InkWell(
+                                onTap: () async {
+                                  TimeOfDay? picked = await showTimePicker(
+                                      context: context,
+                                      initialTime: _endTime,
+                                      builder: (context, child) => Theme(
+                                          data: ThemeData.dark().copyWith(
+                                              colorScheme: ColorScheme.dark(
+                                                  primary: _accentCyan,
+                                                  onPrimary: Colors.black,
+                                                  surface: _cardDark,
+                                                  onSurface: Colors.white
+                                              )
+                                          ),
+                                          child: child!
+                                      )
+                                  );
+                                  if (picked != null) setState(() => _endTime = picked);
+                                },
+                                child: Container(
+                                    padding: const EdgeInsets.all(20),
+                                    decoration: BoxDecoration(color: _cardDark, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.white.withOpacity(0.1))),
+                                    child: Row(
+                                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          Text("${widget.isFrench ? 'Fin' : 'End'}: ${_endTime.hour.toString().padLeft(2, '0')}:${_endTime.minute.toString().padLeft(2, '0')}", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 16)),
+                                          Icon(Icons.access_time, color: _accentCyan)
+                                        ]
+                                    )
+                                )
+                            )
+                        ),
+                      ]
+                  ),
+                ],
+
                 const SizedBox(height: 48),
 
                 _isFetching

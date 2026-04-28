@@ -1,6 +1,8 @@
 // lib/screens/developer_screen.dart
 
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart'; // 🚀 ADDED for wiping data
 import 'camera_ftp_setup_screen.dart';
 import 'ftp_server_screen.dart';
 import 'cloud_sync_screen.dart';
@@ -72,6 +74,76 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
   void dispose() {
     _passwordController.dispose();
     super.dispose();
+  }
+
+  // 🚀 NEW: Factory Reset Warning Dialog
+  void _showWipeDataConfirmation() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: _cardDark,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: const BorderSide(color: Colors.redAccent, width: 2)),
+        title: Row(
+          children: [
+            const Icon(Icons.warning_amber_rounded, color: Colors.redAccent, size: 32),
+            const SizedBox(width: 12),
+            Text(
+              widget.isFrench ? "ATTENTION : DANGER CRITIQUE" : "WARNING: CRITICAL DANGER",
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        content: Text(
+          widget.isFrench
+              ? "Êtes-vous absolument sûr de vouloir tout effacer ? Cette action supprimera :\n\n• Toutes les configurations\n• Les profils de magasin\n• Les adresses IP des caméras\n• La base de données locale des caisses (POS)\n\nL'application se fermera automatiquement après la suppression. Au prochain lancement, elle sera comme neuve."
+              : "Are you absolutely sure you want to wipe everything? This action will delete:\n\n• All configurations\n• Store profiles\n• Camera IP addresses\n• Local POS database\n\nThe application will close automatically after deletion. Upon the next launch, it will be completely empty.",
+          style: const TextStyle(color: Colors.white70, fontSize: 16, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(widget.isFrench ? "ANNULER" : "CANCEL", style: const TextStyle(color: Colors.white54, fontWeight: FontWeight.bold)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent, foregroundColor: Colors.white),
+            onPressed: () async {
+              Navigator.pop(context); // Close the dialog
+              _performFactoryReset();
+            },
+            child: Text(widget.isFrench ? "OUI, TOUT EFFACER" : "YES, WIPE ALL DATA", style: const TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 🚀 NEW: The Wipe Logic
+  Future<void> _performFactoryReset() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    // This clears ALL saved data, IPs, passwords, paths, and databases
+    await prefs.clear();
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            widget.isFrench
+                ? "Toutes les données ont été effacées avec succès. Fermeture de l'application..."
+                : "All data wiped successfully. Closing application...",
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+          backgroundColor: Colors.redAccent,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+
+    // Wait 2 seconds so the user can read the success message
+    await Future.delayed(const Duration(seconds: 2));
+
+    // Forcefully exit the application to ensure clean memory for the next launch
+    exit(0);
   }
 
   @override
@@ -258,6 +330,15 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
           icon: Icons.cloud_upload,
           color: Colors.purpleAccent,
           onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const CloudSyncScreen())),
+        ),
+
+        // 🚀 NEW: WIPE ALL DATA (FACTORY RESET)
+        _buildDevCard(
+          title: widget.isFrench ? 'Réinitialisation d\'Usine' : 'Factory Reset',
+          subtitle: widget.isFrench ? 'Effacer toutes les données locales' : 'Wipe all local app data',
+          icon: Icons.delete_forever,
+          color: Colors.redAccent,
+          onTap: _showWipeDataConfirmation, // Call the warning dialog
         ),
       ]);
     }
