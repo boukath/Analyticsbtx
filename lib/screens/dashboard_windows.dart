@@ -18,6 +18,7 @@ import 'package:url_launcher/url_launcher.dart'; // 🚀 Added for ERP Intervent
 
 import 'cloud_sync_screen.dart';
 import '../services/ftp_service.dart';
+import '../services/http_server_service.dart'; // 🚀 NEW: Imported to check HTTP status
 import 'ftp_server_screen.dart';
 import '../models/people_count.dart';
 import '../services/folder_scanner_service.dart';
@@ -189,7 +190,12 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
 
   Timer? _autoRefreshTimer;
   String _localIp = "";
+
+  // 🚀 NEW: Split server running states
   bool _isFtpRunning = false;
+  bool _isHttpRunning = false;
+  Timer? _serverStatusTimer; // Polling timer for the dashboard indicator
+
   Map<String, String> _cameraIps = {};
   Timer? _securityTimer;
   bool _isIpMismatch = false;
@@ -238,9 +244,12 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
     _loadStoreProfile();
     _loadPosDatabase();
     _loadSavedFolder();
-    _checkFtpStatus();
+    _checkServerStatus(); // 🚀 Changed name
     _startSecurityMonitor();
     _loadCameraIps();
+
+    // 🚀 NEW: Start polling the server status every 3 seconds to keep the UI badge fresh
+    _serverStatusTimer = Timer.periodic(const Duration(seconds: 3), (_) => _checkServerStatus());
   }
 
   Future<void> _initSystemTray() async {
@@ -297,7 +306,9 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
     }
     _autoRefreshTimer?.cancel();
     _securityTimer?.cancel();
+    _serverStatusTimer?.cancel(); // 🚀 NEW: Clean up timer
     FtpService.stopServer();
+    HttpServerService.stopServer(); // Clean up both
     super.dispose();
   }
 
@@ -491,7 +502,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
         )
     );
     _loadCameraIps();
-    _checkFtpStatus();
+    _checkServerStatus(); // 🚀 Changed name
     _loadStoreProfile(); // Reload in case it was changed
     if (mounted) setState(() {});
   }
@@ -508,9 +519,16 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
     });
   }
 
-  Future<void> _checkFtpStatus() async {
+  // 🚀 NEW: Checks BOTH servers and updates the UI state
+  Future<void> _checkServerStatus() async {
     String ip = await FtpService.getLocalIpAddress();
-    if (mounted) setState(() { _isFtpRunning = FtpService.isRunning; _localIp = ip; });
+    if (mounted) {
+      setState(() {
+        _isFtpRunning = FtpService.isRunning;
+        _isHttpRunning = HttpServerService.isRunning;
+        _localIp = ip;
+      });
+    }
   }
 
   Future<void> _loadSavedFolder() async {
@@ -1561,12 +1579,49 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
     );
   }
 
+  // 🚀 NEW: The UI Badge to display server status
+  Widget _buildServerStatusBadge() {
+    bool anyRunning = _isFtpRunning || _isHttpRunning;
+    Color statusColor = anyRunning ? Colors.greenAccent : Colors.redAccent;
+    String statusText = anyRunning
+        ? (_isFrench ? 'RÉCEPTION ACTIVE' : 'SERVERS ONLINE')
+        : (_isFrench ? 'SERVEURS ARRÊTÉS' : 'SERVERS OFFLINE');
+
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: statusColor.withOpacity(0.1),
+        border: Border.all(color: statusColor.withOpacity(0.3)),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+              width: 8, height: 8,
+              decoration: BoxDecoration(
+                  color: statusColor,
+                  shape: BoxShape.circle,
+                  boxShadow: [BoxShadow(color: statusColor, blurRadius: 4)]
+              )
+          ),
+          const SizedBox(width: 8),
+          Text(statusText, style: TextStyle(color: statusColor, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1.0)),
+        ],
+      ),
+    );
+  }
+
   Widget _buildPageHeader() {
     bool isFilterActive = _workingMinuteStart > 0 || _workingMinuteEnd < 1439;
 
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      crossAxisAlignment: CrossAxisAlignment.end,
+    // CHANGED: Replaced Row with Wrap to automatically handle screen resizing
+    return Wrap(
+      alignment: WrapAlignment.spaceBetween,
+      crossAxisAlignment: WrapCrossAlignment.end,
+      spacing: 16,
+      runSpacing: 16,
       children: [
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1580,10 +1635,14 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
                 padding: const EdgeInsets.only(top: 8.0),
                 child: Text('Source: $_selectedFolderPath', style: const TextStyle(color: Colors.white38, fontSize: 15, fontWeight: FontWeight.w600)),
               ),
+            // 🚀 NEW: Add the Server Status Badge below the folder path
+            const SizedBox(height: 8),
+            _buildServerStatusBadge(),
           ],
         ),
 
         Row(
+          mainAxisSize: MainAxisSize.min, // ADDED: Keeps the right-side controls tightly packed
           children: [
             if (_rawData.isNotEmpty) ...[
               FilterChip(
@@ -2111,47 +2170,60 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
 
   Widget _buildBentoCard({required String title, required String value, required String unit, required IconData icon, required Color color, Widget? trendWidget}) {
     return _buildGlassContainer(
-      height: 240,
-      padding: const EdgeInsets.all(32),
+      // CHANGED: Removed the strict `height: 240` which caused bottom overflow.
+      // Reduced padding slightly to give the content more breathing room on small screens.
+      padding: const EdgeInsets.all(24),
       borderRadius: 40,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: color.withOpacity(0.4), width: 1.5),
-                  boxShadow: [BoxShadow(color: color.withOpacity(0.3), blurRadius: 20)],
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 180), // Ensure it stays uniform but can grow if needed
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          mainAxisSize: MainAxisSize.min, // Let the column shrink-wrap vertically
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: color.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: color.withOpacity(0.4), width: 1.5),
+                    boxShadow: [BoxShadow(color: color.withOpacity(0.3), blurRadius: 20)],
+                  ),
+                  child: Icon(icon, color: color, size: 32),
                 ),
-                child: Icon(icon, color: color, size: 32),
-              ),
-              if (trendWidget != null) trendWidget,
-            ],
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(title, style: const TextStyle(fontSize: 13, color: Colors.white70, fontWeight: FontWeight.w900, letterSpacing: 2.5)),
-              const SizedBox(height: 8),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.baseline,
-                textBaseline: TextBaseline.alphabetic,
-                children: [
-                  Text(value, style: const TextStyle(fontSize: 52, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: -2.0)),
-                  const SizedBox(width: 8),
-                  Text(unit, style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: color.withOpacity(0.9))),
-                ],
-              ),
-            ],
-          ),
-        ],
+                if (trendWidget != null) trendWidget,
+              ],
+            ),
+            const SizedBox(height: 16), // Replaces pure spaceBetween pushing elements out of bounds
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: const TextStyle(fontSize: 13, color: Colors.white70, fontWeight: FontWeight.w900, letterSpacing: 2.5)),
+                const SizedBox(height: 8),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.baseline,
+                  textBaseline: TextBaseline.alphabetic,
+                  children: [
+                    // CHANGED: Wrapped the large number in Flexible & FittedBox to prevent horizontal crashing
+                    Flexible(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(value, style: const TextStyle(fontSize: 52, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: -2.0)),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(unit, style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: color.withOpacity(0.9))),
+                  ],
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }

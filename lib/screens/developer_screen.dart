@@ -2,9 +2,11 @@
 
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart'; // 🚀 ADDED for wiping data
+import 'package:shared_preferences/shared_preferences.dart'; // ADDED for wiping data
+
 import 'camera_ftp_setup_screen.dart';
 import 'ftp_server_screen.dart';
+import 'http_server_screen.dart'; // 🚀 NEW: Import the HTTP Server Screen
 import 'cloud_sync_screen.dart';
 import 'create_user_screen.dart';
 import 'manage_users_screen.dart';
@@ -76,7 +78,7 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     super.dispose();
   }
 
-  // 🚀 NEW: Factory Reset Warning Dialog
+  // Factory Reset Warning Dialog
   void _showWipeDataConfirmation() {
     showDialog(
       context: context,
@@ -117,7 +119,7 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
     );
   }
 
-  // 🚀 NEW: The Wipe Logic
+  // The Wipe Logic
   Future<void> _performFactoryReset() async {
     final prefs = await SharedPreferences.getInstance();
 
@@ -270,10 +272,18 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
       // FTP Server
       _buildDevCard(
         title: widget.isFrench ? 'Serveur FTP' : 'FTP Server',
-        subtitle: widget.isFrench ? 'Gérer la réception réseau' : 'Manage network reception',
-        icon: Icons.wifi_tethering,
+        subtitle: widget.isFrench ? 'Caméras hébergées FTP' : 'Legacy FTP Cameras',
+        icon: Icons.folder_shared, // Distinct icon for FTP
         color: Colors.greenAccent,
         onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const FtpServerScreen())),
+      ),
+      // 🚀 NEW: HTTP Server
+      _buildDevCard(
+        title: widget.isFrench ? 'Serveur HTTP' : 'HTTP Server',
+        subtitle: widget.isFrench ? 'Caméras modernes (POST)' : 'Modern HTTP Push Cameras',
+        icon: Icons.http, // Distinct icon for HTTP
+        color: Colors.purpleAccent, // Matches the theme we used in the HTTP screen
+        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const HttpServerScreen())),
       ),
     ]);
 
@@ -332,7 +342,7 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
           onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const CloudSyncScreen())),
         ),
 
-        // 🚀 NEW: WIPE ALL DATA (FACTORY RESET)
+        // WIPE ALL DATA (FACTORY RESET)
         _buildDevCard(
           title: widget.isFrench ? 'Réinitialisation d\'Usine' : 'Factory Reset',
           subtitle: widget.isFrench ? 'Effacer toutes les données locales' : 'Wipe all local app data',

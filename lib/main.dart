@@ -1,8 +1,8 @@
 // lib/main.dart
 
-import 'dart:io'; // 🚀 NEW: Required for Platform.resolvedExecutable
+import 'dart:io'; // Required for Platform.resolvedExecutable
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart'; // 🚀 Gives us kIsWeb!
+import 'package:flutter/foundation.dart'; // Gives us kIsWeb!
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart'; // Needed for the background worker
 import 'l10n/app_localizations.dart';
@@ -12,8 +12,8 @@ import 'package:window_manager/window_manager.dart';
 import 'package:tray_manager/tray_manager.dart';
 
 // --- Startup Imports ---
-import 'package:launch_at_startup/launch_at_startup.dart'; // 🚀 NEW: For running on Windows boot
-import 'package:package_info_plus/package_info_plus.dart'; // 🚀 NEW: For getting the app's executable path
+import 'package:launch_at_startup/launch_at_startup.dart'; // For running on Windows boot
+import 'package:package_info_plus/package_info_plus.dart'; // For getting the app's executable path
 
 // --- Firebase imports ---
 import 'package:firebase_core/firebase_core.dart';
@@ -21,6 +21,9 @@ import 'firebase_options.dart';
 
 // --- Service imports ---
 import 'services/firebase_sync_service.dart'; // Import the sync service
+// 🚀 NEW: Import the server services for auto-start capabilities
+import 'services/ftp_service.dart';
+import 'services/http_server_service.dart';
 
 // --- Screen imports ---
 import 'screens/splash_screen.dart';
@@ -55,7 +58,7 @@ void main() async {
     });
 
     // =======================================================================
-    // 🚀 NEW: WINDOWS STARTUP CONFIGURATION
+    // WINDOWS STARTUP CONFIGURATION
     // Configure the app to start automatically when the user logs into Windows.
     // =======================================================================
     try {
@@ -74,7 +77,7 @@ void main() async {
     }
 
     // =======================================================================
-    // 🚀 FIX: GLOBAL BACKGROUND WORKER
+    // GLOBAL BACKGROUND WORKER
     // Start the scheduled sync here so it runs independently of the UI.
     // =======================================================================
     FirebaseSyncService.startScheduledSync(() async {
@@ -95,9 +98,48 @@ void main() async {
         debugPrint("❌ Global Background Worker Error: $e");
       }
     });
+
+    // =======================================================================
+    // 🚀 NEW: SERVER AUTO-START LOGIC
+    // Checks if the servers were running before the app was last closed/rebooted
+    // =======================================================================
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      bool startFtp = prefs.getBool('ftp_auto_start') ?? false;
+      bool startHttp = prefs.getBool('http_auto_start') ?? false;
+      String folderPath = prefs.getString('saved_data_folder') ?? '';
+
+      if (folderPath.isNotEmpty) {
+        // Auto-start FTP if it was left on
+        if (startFtp) {
+          int ftpPort = prefs.getInt('ftp_port') ?? 21;
+          String ftpUser = prefs.getString('ftp_user') ?? "shopline";
+          String ftpPass = prefs.getString('ftp_pass') ?? "shopline";
+          await FtpService.startServer(
+              rootDirectory: folderPath,
+              port: ftpPort,
+              username: ftpUser,
+              password: ftpPass
+          );
+          debugPrint("✅ Auto-started FTP Server in background.");
+        }
+
+        // Auto-start HTTP if it was left on
+        if (startHttp) {
+          int httpPort = prefs.getInt('http_port') ?? 8080;
+          await HttpServerService.startServer(
+              rootDirectory: folderPath,
+              port: httpPort
+          );
+          debugPrint("✅ Auto-started HTTP Server in background.");
+        }
+      }
+    } catch (e) {
+      debugPrint("❌ Error during server auto-start: $e");
+    }
   }
 
-  // 🚀 SMART ROUTING: Decide which screen to show first based on the platform
+  // SMART ROUTING: Decide which screen to show first based on the platform
   Widget firstScreen;
   if (kIsWeb) {
     firstScreen = const LoginScreen(); // Web users must log in to the Cloud Dashboard
@@ -108,7 +150,7 @@ void main() async {
   runApp(MyApp(initialScreen: firstScreen));
 }
 
-// 🚀 Changed from StatelessWidget to StatefulWidget to handle Window & Tray events
+// Changed from StatelessWidget to StatefulWidget to handle Window & Tray events
 class MyApp extends StatefulWidget {
   final Widget initialScreen;
 
@@ -153,6 +195,10 @@ class _MyAppState extends State<MyApp> with WindowListener, TrayListener {
         ),
         MenuItem.separator(),
         MenuItem(
+          key: 'restart_app',
+          label: 'Restart App', // NEW: Added the restart option
+        ),
+        MenuItem(
           key: 'exit_app',
           label: 'Exit Analytics completely',
         ),
@@ -166,7 +212,7 @@ class _MyAppState extends State<MyApp> with WindowListener, TrayListener {
   void onWindowClose() async {
     bool isPreventClose = await windowManager.isPreventClose();
     if (isPreventClose) {
-      // 🚀 Hide the window instead of killing the app!
+      // Hide the window instead of killing the app!
       // Your FirebaseSyncService will keep running smoothly in the background.
       await windowManager.hide();
     }
@@ -175,9 +221,8 @@ class _MyAppState extends State<MyApp> with WindowListener, TrayListener {
   // --- Handle System Tray Clicks ---
   @override
   void onTrayIconMouseDown() {
-    // Left click on the tray icon shows the app again
-    windowManager.show();
-    windowManager.focus();
+    // Left-click now forces the context menu to pop up instead of just opening the window!
+    trayManager.popUpContextMenu();
   }
 
   @override
@@ -185,9 +230,15 @@ class _MyAppState extends State<MyApp> with WindowListener, TrayListener {
     if (menuItem.key == 'show_app') {
       windowManager.show();
       windowManager.focus();
+    } else if (menuItem.key == 'restart_app') {
+      // Start a fresh instance of the app, then kill this one.
+      Process.start(Platform.resolvedExecutable, []);
+      windowManager.destroy();
+      exit(0);
     } else if (menuItem.key == 'exit_app') {
       // If the user deliberately selects exit, we terminate the app completely.
       windowManager.destroy();
+      exit(0); // Added exit(0) to ensure background isolates die cleanly
     }
   }
 

@@ -1,30 +1,27 @@
-// lib/screens/ftp_server_screen.dart
+// lib/screens/http_server_screen.dart
 
 import 'dart:ui';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../services/ftp_service.dart';
-import 'camera_ftp_setup_screen.dart';
 
-class FtpServerScreen extends StatefulWidget {
-  const FtpServerScreen({Key? key}) : super(key: key);
+import '../services/ftp_service.dart'; // Needed strictly for checking the local IP address
+import '../services/http_server_service.dart';
+
+class HttpServerScreen extends StatefulWidget {
+  const HttpServerScreen({Key? key}) : super(key: key);
 
   @override
-  State<FtpServerScreen> createState() => _FtpServerScreenState();
+  State<HttpServerScreen> createState() => _HttpServerScreenState();
 }
 
-class _FtpServerScreenState extends State<FtpServerScreen> {
+class _HttpServerScreenState extends State<HttpServerScreen> {
   final TextEditingController _ipController = TextEditingController();
   final TextEditingController _portController = TextEditingController();
-  final TextEditingController _userController = TextEditingController();
-  final TextEditingController _passController = TextEditingController();
-
   String _selectedDirectory = "No folder selected";
   bool _isRunning = false;
   List<String> _consoleLogs = [];
-
   final ScrollController _scrollController = ScrollController();
 
   // --- IP Security Monitor Variables ---
@@ -37,9 +34,10 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
   void initState() {
     super.initState();
     _initSettings();
-    _isRunning = FtpService.isRunning;
+    _isRunning = HttpServerService.isRunning;
 
-    FtpService.logStream.listen((logMessage) {
+    // Listen directly to the HTTP service logs
+    HttpServerService.logStream.listen((logMessage) {
       if (mounted) {
         setState(() {
           _consoleLogs.add(logMessage);
@@ -66,14 +64,12 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
     _scrollController.dispose();
     _ipController.dispose();
     _portController.dispose();
-    _userController.dispose();
-    _passController.dispose();
     super.dispose();
   }
 
   void _startLocalIpMonitor() {
     _ipMonitorTimer = Timer.periodic(const Duration(seconds: 5), (timer) async {
-      String currentIp = await FtpService.getLocalIpAddress();
+      String currentIp = await FtpService.getLocalIpAddress(); // Reusing your existing network checker
       String expectedIp = _ipController.text.trim();
 
       if (mounted) {
@@ -118,7 +114,7 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
                   _isAlertShowing = false;
                   Navigator.of(c).pop();
                 },
-                child: const Text("DISMISS", style: TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
+                child: const Text("DISMISS", style: TextStyle(color: Colors.purpleAccent, fontWeight: FontWeight.bold)),
               ),
               ElevatedButton(
                 style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent, foregroundColor: Colors.white),
@@ -128,12 +124,10 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
                     _isIpMismatch = false;
                   });
                   final prefs = await SharedPreferences.getInstance();
-                  await prefs.setString('ftp_ip', actual);
-
+                  await prefs.setString('http_ip', actual); // Save to HTTP specific key
                   _isAlertShowing = false;
                   if (context.mounted) Navigator.of(c).pop();
-
-                  FtpService.log("⚠️ IP Address updated by user to: $actual");
+                  HttpServerService.log("⚠️ IP Address updated by user to: $actual");
                 },
                 child: const Text("UPDATE SETTINGS", style: TextStyle(fontWeight: FontWeight.bold)),
               ),
@@ -145,18 +139,14 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
 
   Future<void> _initSettings() async {
     final prefs = await SharedPreferences.getInstance();
-
-    String savedIp = prefs.getString('ftp_ip') ?? '';
+    // Using HTTP specific keys so they don't overwrite FTP settings
+    String savedIp = prefs.getString('http_ip') ?? prefs.getString('ftp_ip') ?? '';
     String? savedPath = prefs.getString('saved_data_folder');
-    int savedPort = prefs.getInt('ftp_port') ?? 21;
-    String savedUser = prefs.getString('ftp_user') ?? "shopline";
-    String savedPass = prefs.getString('ftp_pass') ?? "shopline";
+    int savedPort = prefs.getInt('http_port') ?? 8080; // HTTP commonly defaults to 8080
 
     setState(() {
       _ipController.text = savedIp;
       _portController.text = savedPort.toString();
-      _userController.text = savedUser;
-      _passController.text = savedPass;
 
       if (savedPath != null && savedPath.isNotEmpty) {
         _selectedDirectory = savedPath;
@@ -172,39 +162,37 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
       setState(() {
         _selectedDirectory = folderPath;
       });
-      FtpService.log("Folder changed to: $folderPath");
+      HttpServerService.log("Folder changed to: $folderPath");
     }
   }
 
-  // 🚀 UPDATED: Now saves the ftp_auto_start preference for main.dart
+  // 🚀 UPDATED: Saves the http_auto_start preference for main.dart
   void _toggleServer() async {
     final prefs = await SharedPreferences.getInstance();
 
     if (_isRunning) {
-      await FtpService.stopServer();
-      await prefs.setBool('ftp_auto_start', false); // 🚀 Tell app NOT to auto-start next time
+      await HttpServerService.stopServer();
+      await prefs.setBool('http_auto_start', false); // 🚀 Tell app NOT to auto-start next time
       setState(() => _isRunning = false);
     } else {
       if (_selectedDirectory == "No folder selected") {
-        FtpService.log("❌ Cannot start server: No directory selected.");
+        HttpServerService.log("❌ Cannot start server: No directory selected.");
         return;
       }
 
-      int port = int.tryParse(_portController.text) ?? 2121;
+      int port = int.tryParse(_portController.text) ?? 8080;
 
-      await prefs.setString('ftp_ip', _ipController.text.trim());
-      await prefs.setInt('ftp_port', port);
-      await prefs.setString('ftp_user', _userController.text.trim());
-      await prefs.setString('ftp_pass', _passController.text.trim());
+      // Save HTTP specific settings
+      await prefs.setString('http_ip', _ipController.text.trim());
+      await prefs.setInt('http_port', port);
+      await prefs.setString('server_protocol', 'http'); // Tell the system HTTP was the last used protocol
 
-      await FtpService.startServer(
+      await HttpServerService.startServer(
         rootDirectory: _selectedDirectory,
         port: port,
-        username: _userController.text.trim(),
-        password: _passController.text.trim(),
       );
 
-      await prefs.setBool('ftp_auto_start', true); // 🚀 Tell app to auto-start next time
+      await prefs.setBool('http_auto_start', true); // 🚀 Tell app to auto-start next time
       setState(() => _isRunning = true);
     }
   }
@@ -217,41 +205,18 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.cyanAccent),
+          icon: const Icon(Icons.arrow_back, color: Colors.purpleAccent), // Using purple to distinguish from FTP
           onPressed: () => Navigator.pop(context),
         ),
         title: const Text(
-            'FTP SERVER CONFIGURATION',
+            'HTTP SERVER CONFIGURATION',
             style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16, letterSpacing: 1.5)
         ),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 16.0, top: 8.0, bottom: 8.0),
-            child: ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.cyanAccent.withOpacity(0.2),
-                foregroundColor: Colors.cyanAccent,
-                elevation: 0,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  side: BorderSide(color: Colors.cyanAccent.withOpacity(0.5)),
-                ),
-              ),
-              icon: const Icon(Icons.video_camera_back, size: 20),
-              label: const Text('SETUP CAMERAS', style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1)),
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const CameraFtpSetupScreen()),
-                );
-              },
-            ),
-          )
-        ],
       ),
       body: Stack(
         children: [
-          Positioned(top: -100, right: -100, child: _buildGlowOrb(Colors.cyanAccent.withOpacity(0.1), 300)),
+          // Background glow orb
+          Positioned(top: -100, right: -100, child: _buildGlowOrb(Colors.purpleAccent.withOpacity(0.1), 300)),
           Padding(
             padding: const EdgeInsets.all(32.0),
             child: Row(
@@ -272,7 +237,7 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('CONNECTION SETTINGS', style: TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
+        const Text('CONNECTION SETTINGS', style: TextStyle(color: Colors.purpleAccent, fontWeight: FontWeight.bold)),
         const SizedBox(height: 16),
 
         if (_isIpMismatch)
@@ -293,7 +258,6 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
               ],
             ),
           ),
-
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -304,11 +268,11 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
               margin: const EdgeInsets.only(bottom: 16),
               child: ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.cyanAccent.withOpacity(0.1),
-                  foregroundColor: Colors.cyanAccent,
+                  backgroundColor: Colors.purpleAccent.withOpacity(0.1),
+                  foregroundColor: Colors.purpleAccent,
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(8),
-                      side: const BorderSide(color: Colors.cyanAccent, width: 1)
+                      side: const BorderSide(color: Colors.purpleAccent, width: 1)
                   ),
                 ),
                 icon: const Icon(Icons.wifi_find),
@@ -318,7 +282,7 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
                   setState(() {
                     _ipController.text = currentIp;
                   });
-                  FtpService.log("🔍 Auto-detected IP: $currentIp. (Click START SERVER to save)");
+                  HttpServerService.log("🔍 Auto-detected IP: $currentIp. (Click START SERVER to save)");
                 },
               ),
             ),
@@ -326,10 +290,11 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
         ),
 
         _buildTextField("Port", _portController),
-        _buildTextField("FTP Username", _userController),
-        _buildTextField("FTP Password", _passController),
+
+        // Note: HTTP doesn't use the standard FTP username/password fields, so we removed them!
+
         const SizedBox(height: 16),
-        const Text('TARGET DIRECTORY', style: TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
+        const Text('TARGET DIRECTORY', style: TextStyle(color: Colors.purpleAccent, fontWeight: FontWeight.bold)),
         const SizedBox(height: 8),
         InkWell(
           onTap: _pickDirectory,
@@ -358,41 +323,8 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             ),
             icon: Icon(_isRunning ? Icons.stop : Icons.play_arrow, size: 28),
-            label: Text(_isRunning ? 'STOP SERVER' : 'START SERVER', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, letterSpacing: 1)),
+            label: Text(_isRunning ? 'STOP HTTP SERVER' : 'START HTTP SERVER', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, letterSpacing: 1)),
             onPressed: _toggleServer,
-          ),
-        ),
-
-        const SizedBox(height: 16), // Spacing
-
-        // --- FIX FIREWALL ISSUES BUTTON ---
-        SizedBox(
-          width: double.infinity,
-          height: 50,
-          child: OutlinedButton.icon(
-            style: OutlinedButton.styleFrom(
-              backgroundColor: Colors.orangeAccent.withOpacity(0.1),
-              foregroundColor: Colors.orangeAccent,
-              side: const BorderSide(color: Colors.orangeAccent, width: 1.5),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-            onPressed: () async {
-              await FtpService.requestFirewallException();
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Requested Firewall Exception. Please click "Yes" on the Windows prompt.'),
-                    backgroundColor: Colors.orange,
-                    behavior: SnackBarBehavior.floating,
-                  ),
-                );
-              }
-            },
-            icon: const Icon(Icons.security),
-            label: const Text(
-              'FIX FIREWALL ISSUES',
-              style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1),
-            ),
           ),
         ),
       ],
@@ -430,11 +362,11 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
               children: [
                 const Icon(Icons.terminal, color: Colors.white54, size: 18),
                 const SizedBox(width: 8),
-                const Text('SERVER EVENT LOGS', style: TextStyle(color: Colors.white54, fontWeight: FontWeight.bold, fontSize: 12)),
+                const Text('HTTP SERVER EVENT LOGS', style: TextStyle(color: Colors.white54, fontWeight: FontWeight.bold, fontSize: 12)),
                 const Spacer(),
                 InkWell(
                   onTap: () => setState(() => _consoleLogs.clear()),
-                  child: const Text('CLEAR', style: TextStyle(color: Colors.cyanAccent, fontSize: 12, fontWeight: FontWeight.bold)),
+                  child: const Text('CLEAR', style: TextStyle(color: Colors.purpleAccent, fontSize: 12, fontWeight: FontWeight.bold)),
                 )
               ],
             ),
@@ -448,9 +380,8 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
                 String logMsg = _consoleLogs[index];
                 Color textColor = Colors.greenAccent;
                 if (logMsg.contains("❌")) textColor = Colors.redAccent;
-                if (logMsg.contains("🛑") || logMsg.contains("⚠️")) textColor = Colors.orangeAccent;
-                if (logMsg.contains("📁") || logMsg.contains("🔄") || logMsg.contains("🔍")) textColor = Colors.cyanAccent;
-
+                if (logMsg.contains("⚠️")) textColor = Colors.orangeAccent;
+                if (logMsg.contains("📥") || logMsg.contains("ℹ️") || logMsg.contains("🔍")) textColor = Colors.purpleAccent;
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 4),
                   child: Text(logMsg, style: TextStyle(color: textColor, fontFamily: 'Courier', fontSize: 13)),
