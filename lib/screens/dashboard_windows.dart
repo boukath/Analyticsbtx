@@ -191,10 +191,12 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
   Timer? _autoRefreshTimer;
   String _localIp = "";
 
-  // 🚀 NEW: Split server running states
+  // 🚀 Server tracking variables
   bool _isFtpRunning = false;
   bool _isHttpRunning = false;
-  Timer? _serverStatusTimer; // Polling timer for the dashboard indicator
+  int _ftpPort = 21;
+  int _httpPort = 8080;
+  Timer? _serverStatusTimer;
 
   Map<String, String> _cameraIps = {};
   Timer? _securityTimer;
@@ -219,7 +221,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
   String _storeName = "My Store";
   String _storeLocation = "MAIN BRANCH";
   String? _storeLogoPath;
-  String _erpPortalLink = ""; // 🚀 NEW: ERP Portal link state
+  String _erpPortalLink = "";
   bool _isCompareMode = false;
   List<PeopleCount> _compareDisplayedData = [];
   int _compareTotalIn = 0;
@@ -244,11 +246,10 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
     _loadStoreProfile();
     _loadPosDatabase();
     _loadSavedFolder();
-    _checkServerStatus(); // 🚀 Changed name
+    _checkServerStatus();
     _startSecurityMonitor();
     _loadCameraIps();
 
-    // 🚀 NEW: Start polling the server status every 3 seconds to keep the UI badge fresh
     _serverStatusTimer = Timer.periodic(const Duration(seconds: 3), (_) => _checkServerStatus());
   }
 
@@ -288,7 +289,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
 
   Future<void> _performFirebaseSync() async {
     if (_displayedData.isEmpty) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Starting Cloud Sync...'), backgroundColor: Colors.orangeAccent));
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Starting Cloud Sync...'), backgroundColor: Colors.orangeAccent));
     final now = DateTime.now();
     String dateStr = "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
     Map<String, dynamic>? posDataForToday = _posDatabase[dateStr];
@@ -306,9 +307,9 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
     }
     _autoRefreshTimer?.cancel();
     _securityTimer?.cancel();
-    _serverStatusTimer?.cancel(); // 🚀 NEW: Clean up timer
+    _serverStatusTimer?.cancel();
     FtpService.stopServer();
-    HttpServerService.stopServer(); // Clean up both
+    HttpServerService.stopServer();
     super.dispose();
   }
 
@@ -433,7 +434,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
                                 fillColor: Colors.black.withOpacity(0.4),
                                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide(color: _glassBorder)),
                                 enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide(color: _glassBorder)),
-                                focusedBorder: const OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(16)), borderSide: BorderSide(color: Colors.redAccent, width: 2)),
+                                focusedBorder: const OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(16)), borderSide: const BorderSide(color: Colors.redAccent, width: 2)),
                                 errorText: errorMessage.isNotEmpty ? errorMessage : null,
                               ),
                             ),
@@ -502,8 +503,8 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
         )
     );
     _loadCameraIps();
-    _checkServerStatus(); // 🚀 Changed name
-    _loadStoreProfile(); // Reload in case it was changed
+    _checkServerStatus();
+    _loadStoreProfile();
     if (mounted) setState(() {});
   }
 
@@ -515,18 +516,24 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
       _storeLogoPath = prefs.getString('store_logo_path');
       _enablePosFeatures = prefs.getBool('enable_pos_features') ?? true;
       _isSingleEntrance = prefs.getBool('is_single_entrance') ?? false;
-      _erpPortalLink = prefs.getString('erp_portal_link') ?? ''; // 🚀 Fetching the saved link
+      _erpPortalLink = prefs.getString('erp_portal_link') ?? '';
     });
   }
 
-  // 🚀 NEW: Checks BOTH servers and updates the UI state
+  // 🚀 UPDATED: Checks BOTH servers and gets their specific ports
   Future<void> _checkServerStatus() async {
     String ip = await FtpService.getLocalIpAddress();
+    final prefs = await SharedPreferences.getInstance();
+    int ftpPort = prefs.getInt('ftp_port') ?? 21;
+    int httpPort = prefs.getInt('http_port') ?? 8080;
+
     if (mounted) {
       setState(() {
         _isFtpRunning = FtpService.isRunning;
         _isHttpRunning = HttpServerService.isRunning;
         _localIp = ip;
+        _ftpPort = ftpPort;
+        _httpPort = httpPort;
       });
     }
   }
@@ -591,6 +598,66 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
     }
   }
 
+  Future<void> _forceRefreshAndGoToLatest() async {
+    if (_selectedFolderPath == null) return;
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    List<PeopleCount> latestData = await _scannerService.loadScbDataFromFolder(_selectedFolderPath!);
+
+    setState(() {
+      _rawData = latestData;
+
+      if (_rawData.isNotEmpty) {
+        Set<String> uniqueIds = _rawData.map((e) => e.doorName).toSet();
+        List<String> sortedIds = uniqueIds.toList()..sort();
+        _availableCameras = ['All Doors', ...sortedIds];
+
+        DateTime maxDate = DateTime(2000);
+        for (var item in _rawData) {
+          var dateParts = item.date.split('/');
+          if (dateParts.length == 3) {
+            DateTime rowDate = DateTime(
+                int.parse(dateParts[2]),
+                int.parse(dateParts[1]),
+                int.parse(dateParts[0])
+            );
+            if (rowDate.isAfter(maxDate)) {
+              maxDate = rowDate;
+            }
+          }
+        }
+
+        if (maxDate.year == 2000) {
+          DateTime now = DateTime.now();
+          maxDate = DateTime(now.year, now.month, now.day);
+        }
+
+        _selectedDateRange = DateTimeRange(start: maxDate, end: maxDate);
+      }
+
+      _applyFilter();
+      _isLoading = false;
+    });
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _isFrench ? 'Données actualisées !' : 'Data refreshed successfully!',
+            style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black),
+          ),
+          backgroundColor: _accentCyan,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
   Future<void> _processDataFromPath(String folderPath) async {
     setState(() { _isLoading = true; _selectedFolderPath = folderPath; _selectedDateRange = null; });
     List<PeopleCount> loadedData = await _scannerService.loadScbDataFromFolder(folderPath);
@@ -620,7 +687,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
 
   void _startAutoRefresh() {
     _autoRefreshTimer?.cancel();
-    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 60), (timer) => _refreshDataSilently());
+    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 10), (timer) => _refreshDataSilently());
   }
 
   Future<void> _refreshDataSilently() async {
@@ -1473,7 +1540,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
               ),
             ),
           ),
-          if (_isFtpRunning && !_isIpMismatch)
+          if ((_isFtpRunning || _isHttpRunning) && !_isIpMismatch)
             Container(
               margin: const EdgeInsets.all(24),
               padding: const EdgeInsets.all(20),
@@ -1488,10 +1555,20 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
                   Row(children: [
                     Container(width: 10, height: 10, decoration: const BoxDecoration(color: Colors.greenAccent, shape: BoxShape.circle, boxShadow: [BoxShadow(color: Colors.greenAccent, blurRadius: 8)])),
                     const SizedBox(width: 12),
-                    Text(_isFrench ? 'FTP Actif' : 'FTP Active', style: const TextStyle(fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: 0.5))
+                    Text(
+                        _isFtpRunning && _isHttpRunning
+                            ? (_isFrench ? 'FTP & HTTP Actifs' : 'FTP & HTTP Active')
+                            : _isFtpRunning
+                            ? (_isFrench ? 'FTP Actif' : 'FTP Active')
+                            : (_isFrench ? 'HTTP Actif' : 'HTTP Active'),
+                        style: const TextStyle(fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: 0.5)
+                    )
                   ]),
                   const SizedBox(height: 8),
-                  Text('ftp://$_localIp:21', style: const TextStyle(fontSize: 13, color: Colors.white70, fontWeight: FontWeight.w500)),
+                  if (_isFtpRunning)
+                    Text('ftp://$_localIp:$_ftpPort', style: const TextStyle(fontSize: 13, color: Colors.white70, fontWeight: FontWeight.w500)),
+                  if (_isHttpRunning)
+                    Text('http://$_localIp:$_httpPort', style: const TextStyle(fontSize: 13, color: Colors.white70, fontWeight: FontWeight.w500)),
                 ],
               ),
             ),
@@ -1579,13 +1656,26 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
     );
   }
 
-  // 🚀 NEW: The UI Badge to display server status
+  // 🚀 UPDATED: The UI Badge dynamically displays server status (FTP/HTTP)
   Widget _buildServerStatusBadge() {
     bool anyRunning = _isFtpRunning || _isHttpRunning;
     Color statusColor = anyRunning ? Colors.greenAccent : Colors.redAccent;
-    String statusText = anyRunning
-        ? (_isFrench ? 'RÉCEPTION ACTIVE' : 'SERVERS ONLINE')
-        : (_isFrench ? 'SERVEURS ARRÊTÉS' : 'SERVERS OFFLINE');
+
+    String activeServers = "";
+    if (_isFtpRunning && _isHttpRunning) {
+      activeServers = "FTP & HTTP";
+    } else if (_isFtpRunning) {
+      activeServers = "FTP";
+    } else if (_isHttpRunning) {
+      activeServers = "HTTP";
+    }
+
+    String statusText;
+    if (anyRunning) {
+      statusText = _isFrench ? 'RÉCEPTION ACTIVE ($activeServers)' : '$activeServers ONLINE';
+    } else {
+      statusText = _isFrench ? 'SERVEURS ARRÊTÉS' : 'SERVERS OFFLINE';
+    }
 
     return Container(
       margin: const EdgeInsets.only(top: 8),
@@ -1635,7 +1725,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
                 padding: const EdgeInsets.only(top: 8.0),
                 child: Text('Source: $_selectedFolderPath', style: const TextStyle(color: Colors.white38, fontSize: 15, fontWeight: FontWeight.w600)),
               ),
-            // 🚀 NEW: Add the Server Status Badge below the folder path
+            // 🚀 Add the Server Status Badge below the folder path
             const SizedBox(height: 8),
             _buildServerStatusBadge(),
           ],
@@ -1659,6 +1749,19 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
               ),
               const SizedBox(width: 20),
             ],
+
+            // 🚀 The Refresh / Actualiser Button
+            _buildGlassContainer(
+              borderRadius: 20,
+              isInteractive: true,
+              child: IconButton(
+                padding: const EdgeInsets.all(12),
+                icon: Icon(Icons.refresh_rounded, color: _accentCyan),
+                onPressed: _forceRefreshAndGoToLatest,
+                tooltip: _isFrench ? "Actualiser les données" : "Refresh Data",
+              ),
+            ),
+            const SizedBox(width: 16),
 
             _buildGlassContainer(
               padding: const EdgeInsets.all(6),

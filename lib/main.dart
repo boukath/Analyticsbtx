@@ -1,6 +1,6 @@
 // lib/main.dart
 
-import 'dart:io'; // Required for Platform.resolvedExecutable
+import 'dart:io'; // Required for Platform.resolvedExecutable and Directory
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart'; // Gives us kIsWeb!
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -32,6 +32,39 @@ import 'screens/login_screen.dart';
 // A global navigator key so background services can show emergency popups anywhere!
 final GlobalKey<NavigatorState> globalNavigatorKey = GlobalKey<NavigatorState>();
 
+// =======================================================================
+// 🚀 NEW: DIRECTORY INITIALIZATION LOGIC
+// Checks for C:\comptage, creates it if missing, and binds it to the app.
+// =======================================================================
+Future<void> _initializeComptageDirectory() async {
+  // Use a raw string (r) so we don't have to escape the backslash in Windows paths
+  const String targetPath = r'C:\comptage';
+  final directory = Directory(targetPath);
+
+  try {
+    // 1. Check if the directory exists. If not, create it.
+    if (!await directory.exists()) {
+      await directory.create(recursive: true);
+      debugPrint("✅ Automatically created directory at $targetPath");
+    } else {
+      debugPrint("✅ Directory already exists at $targetPath");
+    }
+
+    // 2. Save this path to SharedPreferences so the app uses it automatically
+    final prefs = await SharedPreferences.getInstance();
+    String? currentSavedPath = prefs.getString('saved_data_folder');
+
+    // Only update the preferences if it isn't already set to C:\comptage
+    if (currentSavedPath != targetPath) {
+      await prefs.setString('saved_data_folder', targetPath);
+      debugPrint("✅ Bound default saved_data_folder to $targetPath");
+    }
+  } catch (e) {
+    // If it fails, it is almost certainly due to missing Administrator privileges
+    debugPrint("❌ CRITICAL ERROR creating $targetPath. Are you running as Administrator? Details: $e");
+  }
+}
+
 void main() async {
   // Ensure Flutter engine is fully bound before making native calls
   WidgetsFlutterBinding.ensureInitialized();
@@ -40,6 +73,11 @@ void main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+
+  // 🚀 Execute our new directory logic right here at startup!
+  if (!kIsWeb) {
+    await _initializeComptageDirectory();
+  }
 
   // Initialize the window manager and startup behavior for Desktop apps
   if (!kIsWeb) {
