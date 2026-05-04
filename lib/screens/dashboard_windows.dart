@@ -214,6 +214,10 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
   int _totalOut = 0;
   int _occupancy = 0;
   String _peakHour = "--:--";
+
+  // 🚀 NEW: Dwell Time Variable
+  int _estimatedDwellTimeMins = 0;
+
   Map<String, Map<String, num>> _posDatabase = {};
   double _currentCa = 0;
   int _currentClients = 0;
@@ -520,7 +524,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
     });
   }
 
-  // 🚀 UPDATED: Checks BOTH servers and gets their specific ports
   Future<void> _checkServerStatus() async {
     String ip = await FtpService.getLocalIpAddress();
     final prefs = await SharedPreferences.getInstance();
@@ -687,7 +690,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
 
   void _startAutoRefresh() {
     _autoRefreshTimer?.cancel();
-    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 10), (timer) => _refreshDataSilently());
+    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 60), (timer) => _refreshDataSilently());
   }
 
   Future<void> _refreshDataSilently() async {
@@ -740,13 +743,49 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
       }
 
       _totalIn = 0; _totalOut = 0; int maxTraffic = 0; _peakHour = "--:--";
+
+      // Variables for Little's Law
+      int runningOccupancy = 0;
+      double sumOccupancy = 0;
+      int activePeriods = 0;
+
       for (var item in _displayedData) {
-        _totalIn += item.inCount; _totalOut += item.outCount;
+        _totalIn += item.inCount;
+        _totalOut += item.outCount;
+
+        // Track peak hour
         int totalVisitorsForHour = (item.inCount + item.outCount) ~/ 2;
-        if (totalVisitorsForHour > maxTraffic) { maxTraffic = totalVisitorsForHour; _peakHour = item.time; }
+        if (totalVisitorsForHour > maxTraffic) {
+          maxTraffic = totalVisitorsForHour;
+          _peakHour = item.time;
+        }
+
+        // Keep a running tally of people inside for the Dwell Time math
+        runningOccupancy += (item.inCount - item.outCount);
+        if (runningOccupancy < 0) runningOccupancy = 0; // Prevent negative occupancy errors
+        sumOccupancy += runningOccupancy;
+        activePeriods++;
       }
+
+      // Current live occupancy
       _occupancy = _totalIn - _totalOut;
       if (_occupancy < 0) _occupancy = 0;
+
+      // 🚀 NEW: Calculate Estimated Dwell Time using Little's Law (W = L / λ)
+      double avgOccupancy = activePeriods > 0 ? (sumOccupancy / activePeriods) : 0;
+
+      // Calculate total minutes in the viewed period
+      double totalMinutes = activePeriods > 0
+          ? (_currentFilter == ChartFilter.hourly ? activePeriods * 60.0 : activePeriods * 24 * 60.0)
+          : 1.0;
+
+      double arrivalRatePerMinute = _totalIn / totalMinutes;
+
+      if (arrivalRatePerMinute > 0) {
+        _estimatedDwellTimeMins = (avgOccupancy / arrivalRatePerMinute).round();
+      } else {
+        _estimatedDwellTimeMins = 0;
+      }
 
       if (_isCompareMode && _selectedDateRange != null) {
         Duration duration = _selectedDateRange!.end.difference(_selectedDateRange!.start);
@@ -2229,7 +2268,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
     if (!_enablePosFeatures) {
       gridItems = [
         _buildBentoCard(title: _isFrench ? 'TOTAL ENTRÉES' : 'TOTAL IN', value: '$_totalIn', unit: _isFrench ? 'PERS' : 'PAX', icon: Icons.login_rounded, color: const Color(0xFF38EF7D)),
-        _buildBentoCard(title: _isFrench ? 'TOTAL SORTIES' : 'TOTAL OUT', value: '$_totalOut', unit: _isFrench ? 'PERS' : 'PAX', icon: Icons.logout_rounded, color: const Color(0xFFFF512F)),
+        _buildBentoCard(title: _isFrench ? 'TEMPS MOYEN' : 'DWELL TIME', value: '$_estimatedDwellTimeMins', unit: 'MIN', icon: Icons.timer_rounded, color: const Color(0xFFFF512F)),
         _buildBentoCard(title: _isFrench ? 'HEURE DE POINTE' : 'PEAK HOUR', value: _peakHour, unit: 'TIME', icon: Icons.access_time_filled_rounded, color: _accentCyan),
         _buildBentoCard(title: _isFrench ? 'OCCUPATION' : 'OCCUPANCY', value: '$_occupancy', unit: _isFrench ? 'ACTUEL' : 'NOW', icon: Icons.people_alt_rounded, color: _accentPurple),
       ];
@@ -2243,38 +2282,64 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
       double compareBasket = _compareClients > 0 ? (_compareCa / _compareClients) : 0.0;
       double compareUpt = _compareClients > 0 ? (_compareArticles / _compareClients) : 0.0;
 
+      // 🚀 IN POS MODE: Show 5 items (Revenue, Conv Rate, Avg Basket, UPT, AND Dwell Time)
       gridItems = [
         _buildBentoCard(title: _isFrench ? 'CHIFFRE D\'AFFAIRES' : 'REVENUE', value: '${_currentCa.toStringAsFixed(0)}', unit: 'DZD', icon: Icons.account_balance_wallet_rounded, color: const Color(0xFF38EF7D), trendWidget: _buildTrendBadge(_currentCa, _compareCa)),
         _buildBentoCard(title: _isFrench ? 'TAUX DE CONV.' : 'CONV. RATE', value: conversionRate.toStringAsFixed(1), unit: '%', icon: Icons.track_changes_rounded, color: const Color(0xFFFF512F), trendWidget: _buildTrendBadge(conversionRate, compareConv)),
         _buildBentoCard(title: _isFrench ? 'PANIER MOYEN' : 'AVG BASKET', value: avgBasket.toStringAsFixed(0), unit: 'DZD', icon: Icons.shopping_bag_rounded, color: _accentCyan, trendWidget: _buildTrendBadge(avgBasket, compareBasket)),
         _buildBentoCard(title: _isFrench ? 'INDICE DE VENTE' : 'U.P.T', value: upt.toStringAsFixed(2), unit: 'ART', icon: Icons.layers_rounded, color: _accentPurple, trendWidget: _buildTrendBadge(upt, compareUpt)),
+        _buildBentoCard(title: _isFrench ? 'TEMPS MOYEN' : 'DWELL TIME', value: '$_estimatedDwellTimeMins', unit: 'MIN', icon: Icons.timer_rounded, color: const Color(0xFFFF512F)), // The 5th item
       ];
     }
 
     if (isDesktop) {
-      return Row(
-        children: [
-          Expanded(flex: 2, child: gridItems[0]), const SizedBox(width: 32),
-          Expanded(flex: 1, child: gridItems[1]), const SizedBox(width: 32),
-          Expanded(flex: 1, child: gridItems[2]), const SizedBox(width: 32),
-          Expanded(flex: 1, child: gridItems[3]),
-        ],
-      );
+      if (gridItems.length == 5) {
+        // Layout for 5 items (POS Mode + Dwell Time)
+        return Row(
+          children: [
+            Expanded(flex: 2, child: gridItems[0]), const SizedBox(width: 16),
+            Expanded(flex: 1, child: gridItems[1]), const SizedBox(width: 16),
+            Expanded(flex: 1, child: gridItems[2]), const SizedBox(width: 16),
+            Expanded(flex: 1, child: gridItems[3]), const SizedBox(width: 16),
+            Expanded(flex: 1, child: gridItems[4]),
+          ],
+        );
+      } else {
+        // Layout for 4 items (Footfall Mode)
+        return Row(
+          children: [
+            Expanded(flex: 2, child: gridItems[0]), const SizedBox(width: 32),
+            Expanded(flex: 1, child: gridItems[1]), const SizedBox(width: 32),
+            Expanded(flex: 1, child: gridItems[2]), const SizedBox(width: 32),
+            Expanded(flex: 1, child: gridItems[3]),
+          ],
+        );
+      }
     } else {
-      return Column(
-        children: [
-          gridItems[0], const SizedBox(height: 24),
-          Row(children: [Expanded(child: gridItems[1]), const SizedBox(width: 24), Expanded(child: gridItems[2])]), const SizedBox(height: 24),
-          gridItems[3],
-        ],
-      );
+      if (gridItems.length == 5) {
+        // Mobile layout for 5 items
+        return Column(
+          children: [
+            gridItems[0], const SizedBox(height: 24),
+            Row(children: [Expanded(child: gridItems[1]), const SizedBox(width: 16), Expanded(child: gridItems[2])]), const SizedBox(height: 24),
+            Row(children: [Expanded(child: gridItems[3]), const SizedBox(width: 16), Expanded(child: gridItems[4])]),
+          ],
+        );
+      } else {
+        // Mobile layout for 4 items
+        return Column(
+          children: [
+            gridItems[0], const SizedBox(height: 24),
+            Row(children: [Expanded(child: gridItems[1]), const SizedBox(width: 24), Expanded(child: gridItems[2])]), const SizedBox(height: 24),
+            gridItems[3],
+          ],
+        );
+      }
     }
   }
 
   Widget _buildBentoCard({required String title, required String value, required String unit, required IconData icon, required Color color, Widget? trendWidget}) {
     return _buildGlassContainer(
-      // CHANGED: Removed the strict `height: 240` which caused bottom overflow.
-      // Reduced padding slightly to give the content more breathing room on small screens.
       padding: const EdgeInsets.all(24),
       borderRadius: 40,
       child: ConstrainedBox(
@@ -2311,7 +2376,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
                   crossAxisAlignment: CrossAxisAlignment.baseline,
                   textBaseline: TextBaseline.alphabetic,
                   children: [
-                    // CHANGED: Wrapped the large number in Flexible & FittedBox to prevent horizontal crashing
                     Flexible(
                       child: FittedBox(
                         fit: BoxFit.scaleDown,
