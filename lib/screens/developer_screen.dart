@@ -2,11 +2,11 @@
 
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart'; // ADDED for wiping data
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'camera_ftp_setup_screen.dart';
 import 'ftp_server_screen.dart';
-import 'http_server_screen.dart'; // 🚀 NEW: Import the HTTP Server Screen
+import 'http_server_screen.dart';
 import 'cloud_sync_screen.dart';
 import 'create_user_screen.dart';
 import 'manage_users_screen.dart';
@@ -76,6 +76,118 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
   void dispose() {
     _passwordController.dispose();
     super.dispose();
+  }
+
+  // --- NEW: Smart Data Source Dialog ---
+  Future<void> _showDataSourceDialog() async {
+    // 1. Fetch the currently saved directory
+    final prefs = await SharedPreferences.getInstance();
+    String currentPath = prefs.getString('saved_data_folder') ?? r'C:\comptage';
+
+    if (!mounted) return;
+
+    showDialog(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            backgroundColor: _cardDark,
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(color: Colors.amberAccent.withOpacity(0.3), width: 1.5)
+            ),
+            title: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(color: Colors.amberAccent.withOpacity(0.2), shape: BoxShape.circle),
+                  child: const Icon(Icons.folder_special, color: Colors.amberAccent),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                    widget.isFrench ? "Source de données" : "Data Source",
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)
+                ),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  widget.isFrench ? "Dossier actuellement surveillé :" : "Currently Monitored Folder:",
+                  style: const TextStyle(color: Colors.white54, fontSize: 14),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: _bgDark,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.white12),
+                  ),
+                  // Display the active path here
+                  child: Text(currentPath, style: const TextStyle(color: Colors.amberAccent, fontWeight: FontWeight.bold, fontSize: 16)),
+                ),
+                const SizedBox(height: 24),
+                Text(
+                  widget.isFrench
+                      ? "Vous pouvez restaurer le dossier par défaut des serveurs (C:\\comptage) ou parcourir vos fichiers pour en sélectionner un autre."
+                      : "You can restore the default server directory (C:\\comptage) or browse your files to select a custom one.",
+                  style: const TextStyle(color: Colors.white70, fontSize: 14, height: 1.5),
+                )
+              ],
+            ),
+            actionsPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text(widget.isFrench ? "ANNULER" : "CANCEL", style: const TextStyle(color: Colors.white54, fontWeight: FontWeight.bold)),
+              ),
+
+              // 2. Set to Default Button (C:\comptage)
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: _bgDark,
+                    foregroundColor: Colors.amberAccent,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))
+                ),
+                onPressed: () async {
+                  // Save the default path explicitly
+                  await prefs.setString('saved_data_folder', r'C:\comptage');
+                  if (context.mounted) {
+                    Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(widget.isFrench ? "Dossier réinitialisé à C:\\comptage. Veuillez rafraîchir le tableau de bord." : "Folder reset to C:\\comptage. Please refresh the dashboard."),
+                          backgroundColor: Colors.green,
+                          behavior: SnackBarBehavior.floating,
+                        )
+                    );
+                  }
+                },
+                icon: const Icon(Icons.restore),
+                label: const Text("DEFAULT (C:\\comptage)", style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+
+              // 3. Custom Browse Button
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.amberAccent,
+                    foregroundColor: Colors.black,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))
+                ),
+                onPressed: () {
+                  Navigator.pop(context); // Close the dialog
+                  widget.onSelectDataSource(); // Trigger the parent's file picker perfectly!
+                },
+                icon: const Icon(Icons.folder_open),
+                label: Text(widget.isFrench ? "PARCOURIR..." : "BROWSE...", style: const TextStyle(fontWeight: FontWeight.bold)),
+              ),
+            ],
+          );
+        }
+    );
   }
 
   // Factory Reset Warning Dialog
@@ -253,13 +365,13 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
         color: Colors.lightBlueAccent,
         onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => StoreProfileScreen(isFrench: widget.isFrench))),
       ),
-      // Data Source
+      // 🚀 UPDATED: Data Source
       _buildDevCard(
         title: widget.isFrench ? 'Source de données' : 'Data Source',
-        subtitle: widget.isFrench ? 'Changer le dossier .scb local' : 'Change local .scb folder',
+        subtitle: widget.isFrench ? 'Gérer le dossier .scb local' : 'Manage local .scb folder',
         icon: Icons.source,
         color: Colors.amberAccent,
-        onTap: widget.onSelectDataSource,
+        onTap: _showDataSourceDialog, // Triggers our new smart dialog
       ),
       // Camera Setup
       _buildDevCard(
@@ -273,16 +385,16 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
       _buildDevCard(
         title: widget.isFrench ? 'Serveur FTP' : 'FTP Server',
         subtitle: widget.isFrench ? 'Caméras hébergées FTP' : 'Legacy FTP Cameras',
-        icon: Icons.folder_shared, // Distinct icon for FTP
+        icon: Icons.folder_shared,
         color: Colors.greenAccent,
         onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const FtpServerScreen())),
       ),
-      // 🚀 NEW: HTTP Server
+      // HTTP Server
       _buildDevCard(
         title: widget.isFrench ? 'Serveur HTTP' : 'HTTP Server',
         subtitle: widget.isFrench ? 'Caméras modernes (POST)' : 'Modern HTTP Push Cameras',
-        icon: Icons.http, // Distinct icon for HTTP
-        color: Colors.purpleAccent, // Matches the theme we used in the HTTP screen
+        icon: Icons.http,
+        color: Colors.purpleAccent,
         onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const HttpServerScreen())),
       ),
     ]);

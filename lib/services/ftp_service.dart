@@ -17,10 +17,57 @@ class FtpService {
   static final StreamController<String> _logController = StreamController<String>.broadcast();
   static Stream<String> get logStream => _logController.stream;
 
+  // --- NEW: Live Metrics State ---
+  static int _filesReceivedToday = 0;
+  static int _bytesTransferredToday = 0;
+  static final Map<String, DateTime> _lastCameraActivity = {};
+  static int _currentDay = DateTime.now().day;
+  static Timer? _metricsCleanupTimer;
+
+  static final StreamController<Map<String, dynamic>> _metricsController = StreamController<Map<String, dynamic>>.broadcast();
+  static Stream<Map<String, dynamic>> get metricsStream => _metricsController.stream;
+
   static void log(String message) {
     final time = DateTime.now().toString().split('.').first;
     _logController.add("[$time] $message");
     debugPrint("FTP LOG: $message");
+  }
+
+  // --- NEW: Metrics Logic ---
+  static void _emitMetrics() {
+    final now = DateTime.now();
+    // Daily reset
+    if (now.day != _currentDay) {
+      _filesReceivedToday = 0;
+      _bytesTransferredToday = 0;
+      _lastCameraActivity.clear();
+      _currentDay = now.day;
+    }
+
+    // Remove cameras that haven't sent a file in the last 15 minutes
+    _lastCameraActivity.removeWhere((camera, lastSeen) => now.difference(lastSeen).inMinutes > 15);
+
+    // Broadcast the fresh data to the UI
+    _metricsController.add({
+      'files': _filesReceivedToday,
+      'bytes': _bytesTransferredToday,
+      'activeCameras': _lastCameraActivity.length,
+    });
+  }
+
+  static Future<void> _recordFileMetric(File file) async {
+    try {
+      _filesReceivedToday++;
+      _bytesTransferredToday += await file.length();
+
+      // The parent folder name is the camera name (e.g., "sas1")
+      String cameraName = file.parent.path.split(Platform.pathSeparator).last;
+      _lastCameraActivity[cameraName] = DateTime.now();
+
+      _emitMetrics();
+    } catch (e) {
+      log("Error recording metrics: $e");
+    }
   }
 
   static Future<bool> _waitForFileCompletion(File file) async {
@@ -43,43 +90,68 @@ class FtpService {
     return false;
   }
 
-  // --- IP Security Monitor ---
+  static Future<List<String>> getAllLocalIpAddresses() async {
+    List<String> ips = [];
+    try {
+      for (var interface in await NetworkInterface.list()) {
+        for (var addr in interface.addresses) {
+          if (addr.type == InternetAddressType.IPv4 && !addr.isLoopback) {
+            ips.add(addr.address);
+          }
+        }
+      }
+    } catch (e) {
+      log("Error fetching IPs: $e");
+    }
+    if (ips.isEmpty) ips.add("127.0.0.1");
+    return ips;
+  }
+
+  static Future<String> getLocalIpAddress() async {
+    List<String> ips = await getAllLocalIpAddresses();
+
+    for (String ip in ips) {
+      if (ip.startsWith('192.168.') && !ip.startsWith('192.168.56.')) return ip;
+      if (ip.startsWith('10.')) return ip;
+      if (ip.startsWith('172.')) return ip;
+    }
+    return ips.first;
+  }
+
   static Timer? _ipMonitorTimer;
   static bool _isAlertShowing = false;
 
   static void startIpMonitor(GlobalKey<NavigatorState> navKey) {
     _ipMonitorTimer?.cancel();
 
-    // Check the IP address every 30 seconds
     _ipMonitorTimer = Timer.periodic(const Duration(seconds: 30), (timer) async {
       final prefs = await SharedPreferences.getInstance();
       String expectedIp = prefs.getString('ftp_ip') ?? '';
 
-      // If no IP is saved yet, skip checking
       if (expectedIp.isEmpty) return;
 
-      String actualIp = await getLocalIpAddress();
+      List<String> actualIps = await getAllLocalIpAddresses();
 
-      // If the current IP doesn't match what the technician saved...
-      if (actualIp != expectedIp) {
-        String displayActualIp = actualIp == "127.0.0.1" ? "DISCONNECTED (No Network)" : actualIp;
+      if (!actualIps.contains(expectedIp)) {
+        String displayActualIp = actualIps.length == 1 && actualIps.first == "127.0.0.1"
+            ? "DISCONNECTED (No Network)"
+            : actualIps.join(", ");
 
-        log("❌ CRITICAL: IP mismatch. Expected $expectedIp, got $displayActualIp");
+        log("❌ CRITICAL: IP mismatch. Expected $expectedIp, but available IPs are: $displayActualIp");
         _showIpAlert(navKey, expectedIp, displayActualIp);
       }
     });
   }
 
-  // --- Show Emergency Pop-up Dialog ---
   static void _showIpAlert(GlobalKey<NavigatorState> navKey, String expectedIp, String actualIp) {
-    if (_isAlertShowing) return; // Prevent spamming multiple pop-ups
+    if (_isAlertShowing) return;
 
     final context = navKey.currentContext;
     if (context != null) {
       _isAlertShowing = true;
       showDialog(
         context: context,
-        barrierDismissible: false, // Forces the user to click the button
+        barrierDismissible: false,
         builder: (BuildContext c) {
           return AlertDialog(
             backgroundColor: const Color(0xFF1E293B),
@@ -94,7 +166,7 @@ class FtpService {
             content: Text(
               "The PC's IP Address has changed or network is disconnected!\n\n"
                   "Expected IP: $expectedIp\n"
-                  "Current IP: $actualIp\n\n"
+                  "Current IP(s): \n$actualIp\n\n"
                   "Your cameras are currently BLIND and cannot send data to this software.\n\n"
                   "Please contact Boitex Info immediately to reconfigure your network.",
               style: const TextStyle(color: Colors.white70, fontSize: 16, height: 1.5),
@@ -156,13 +228,15 @@ class FtpService {
         password: password,
         fileOperations: fileOps,
         serverType: ServerType.readAndWrite,
-        // Note: The 'logger' parameter was removed to fix the build error.
       );
 
       await _ftpServer!.startInBackground();
       log("✅ Server active and listening on Port $port");
       log("👤 Authenticating as user: '$username'");
       log("⏳ Waiting for camera connections...");
+
+      // Start the metrics background cleanup timer
+      _metricsCleanupTimer = Timer.periodic(const Duration(minutes: 1), (_) => _emitMetrics());
 
       _directoryWatcher = Directory(rootDirectory).watch(recursive: true).listen((event) async {
         if (event is! FileSystemCreateEvent && event is! FileSystemModifyEvent) return;
@@ -177,9 +251,8 @@ class FtpService {
 
           if (isComplete) {
             log("✅ Camera file received successfully: $fileName");
-            // 🚀 REMOVED: B2CloudService.uploadScbFile(...)
-            // The file is saved locally. The scheduled Auto-Sync in
-            // b2_cloud_service.dart will handle uploading it at 14:00 and 22:00.
+            // 🚀 Record the metric immediately after a successful receipt
+            await _recordFileMetric(uploadedFile);
           } else {
             log("❌ File upload timed out or failed: $fileName");
           }
@@ -197,6 +270,7 @@ class FtpService {
         log("Stopping FTP Server...");
         _ftpServer!.stop();
         _directoryWatcher?.cancel();
+        _metricsCleanupTimer?.cancel();
         log("🛑 Server offline.");
       } catch (e) {
         log("❌ Error stopping FTP: $e");
@@ -205,10 +279,7 @@ class FtpService {
     }
   }
 
-  // --- AUTOMATED WINDOWS FIREWALL EXCEPTION ---
-  /// Automatically requests Admin rights and adds this app to the Windows Firewall
   static Future<void> requestFirewallException() async {
-    // 1. Safety check: Only run this on Windows
     if (!Platform.isWindows) {
       log("Firewall configuration is only required on Windows.");
       return;
@@ -216,21 +287,10 @@ class FtpService {
 
     try {
       log("Requesting Windows Firewall exception...");
-
-      // 2. Get the exact path of the currently running application (.exe)
       String exePath = Platform.resolvedExecutable;
-
-      // 3. Construct the netsh command to allow this specific program
-      // Rule Name: "Store Traffic Analytics FTP"
-      // Dir: in (Incoming traffic)
-      // Action: allow
-      // Program: The exact path to our Flutter .exe
       String netshCommand = 'advfirewall firewall add rule name="Store Traffic Analytics FTP" dir=in action=allow program="$exePath" enable=yes';
-
-      // 4. Wrap it in a PowerShell command that requests Administrator privileges (-Verb RunAs)
       String psCommand = 'Start-Process netsh -ArgumentList \'$netshCommand\' -Verb RunAs -WindowStyle Hidden';
 
-      // 5. Execute the command
       var result = await Process.run('powershell', ['-Command', psCommand]);
 
       if (result.exitCode == 0) {
@@ -241,21 +301,6 @@ class FtpService {
     } catch (e) {
       log("❌ Error configuring firewall: $e");
     }
-  }
-
-  static Future<String> getLocalIpAddress() async {
-    try {
-      for (var interface in await NetworkInterface.list()) {
-        for (var addr in interface.addresses) {
-          if (addr.type == InternetAddressType.IPv4 && !addr.isLoopback) {
-            return addr.address;
-          }
-        }
-      }
-    } catch (e) {
-      return "127.0.0.1";
-    }
-    return "127.0.0.1";
   }
 
   static bool get isRunning => _ftpServer != null;

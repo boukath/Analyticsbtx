@@ -8,13 +8,59 @@ class HttpServerService {
   static HttpServer? _server;
   static final StreamController<String> _logController = StreamController<String>.broadcast();
 
-  // Expose the log stream so the UI can listen to it, exactly like the FTP service
+  // --- NEW: Live Metrics State ---
+  static int _filesReceivedToday = 0;
+  static int _bytesTransferredToday = 0;
+  static final Map<String, DateTime> _lastCameraActivity = {};
+  static int _currentDay = DateTime.now().day;
+  static Timer? _metricsCleanupTimer;
+
+  static final StreamController<Map<String, dynamic>> _metricsController = StreamController<Map<String, dynamic>>.broadcast();
+  static Stream<Map<String, dynamic>> get metricsStream => _metricsController.stream;
+
+  // Expose the log stream so the UI can listen to it
   static Stream<String> get logStream => _logController.stream;
 
   static void log(String message) {
     final time = DateTime.now().toString().split('.').first;
     _logController.add("[$time] $message");
     debugPrint("HTTP LOG: $message");
+  }
+
+  // --- NEW: Metrics Logic ---
+  static void _emitMetrics() {
+    final now = DateTime.now();
+    // Daily reset: clear the stats if the day has rolled over at midnight
+    if (now.day != _currentDay) {
+      _filesReceivedToday = 0;
+      _bytesTransferredToday = 0;
+      _lastCameraActivity.clear();
+      _currentDay = now.day;
+    }
+
+    // Remove cameras that haven't sent a file in the last 15 minutes
+    _lastCameraActivity.removeWhere((camera, lastSeen) => now.difference(lastSeen).inMinutes > 15);
+
+    // Broadcast the fresh data to the UI
+    _metricsController.add({
+      'files': _filesReceivedToday,
+      'bytes': _bytesTransferredToday,
+      'activeCameras': _lastCameraActivity.length,
+    });
+  }
+
+  static Future<void> _recordFileMetric(File file, String cameraName) async {
+    try {
+      _filesReceivedToday++;
+      _bytesTransferredToday += await file.length();
+
+      // Update the last seen timestamp for this specific camera
+      _lastCameraActivity[cameraName] = DateTime.now();
+
+      _emitMetrics();
+    } catch (e) {
+      log("Error recording metrics: $e");
+    }
   }
 
   /// Starts the HTTP Server to listen for camera POST requests
@@ -32,6 +78,9 @@ class HttpServerService {
       log("✅ HTTP Server active and listening on Port $port");
       log("📂 Target Directory: $rootDirectory");
       log("⏳ Waiting for camera HTTP connections...");
+
+      // Start the metrics background cleanup timer
+      _metricsCleanupTimer = Timer.periodic(const Duration(minutes: 1), (_) => _emitMetrics());
 
       // Listen for incoming requests continuously
       _server!.listen((HttpRequest request) {
@@ -59,7 +108,7 @@ class HttpServerService {
           await targetDir.create(recursive: true);
         }
 
-        // 3. 🚀 FIXED: Read the incoming bytes directly from the HttpRequest stream
+        // 3. Read the incoming bytes directly from the HttpRequest stream
         final List<int> bytes = [];
         await for (var chunk in request) {
           bytes.addAll(chunk);
@@ -73,7 +122,10 @@ class HttpServerService {
         await file.writeAsBytes(bytes);
         log("📥 Received file from URL '/$cameraFolder': $fileName");
 
-        // 6. Send a success response back to the camera so it knows to stop trying
+        // 6. 🚀 NEW: Record the metric immediately after a successful write
+        await _recordFileMetric(file, cameraFolder);
+
+        // 7. Send a success response back to the camera so it knows to stop trying
         request.response
           ..statusCode = HttpStatus.ok
           ..write('Data received successfully')
@@ -100,6 +152,10 @@ class HttpServerService {
       try {
         log("Stopping HTTP Server...");
         await _server!.close(force: true);
+
+        // Clean up the timer when the server stops
+        _metricsCleanupTimer?.cancel();
+
         _server = null;
         log("🛑 Server offline.");
       } catch (e) {

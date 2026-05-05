@@ -22,7 +22,16 @@ class _HttpServerScreenState extends State<HttpServerScreen> {
   String _selectedDirectory = "No folder selected";
   bool _isRunning = false;
   List<String> _consoleLogs = [];
+
+  // Store all detected IPs
+  List<String> _detectedIps = [];
+
   final ScrollController _scrollController = ScrollController();
+
+  // --- NEW: Live Metrics State ---
+  int _filesToday = 0;
+  int _bytesToday = 0;
+  int _activeCameras = 0;
 
   // --- IP Security Monitor Variables ---
   Timer? _ipMonitorTimer;
@@ -55,6 +64,17 @@ class _HttpServerScreenState extends State<HttpServerScreen> {
       }
     });
 
+    // --- NEW: Listen to Live HTTP Server Metrics ---
+    HttpServerService.metricsStream.listen((metrics) {
+      if (mounted) {
+        setState(() {
+          _filesToday = metrics['files'];
+          _bytesToday = metrics['bytes'];
+          _activeCameras = metrics['activeCameras'];
+        });
+      }
+    });
+
     _startLocalIpMonitor();
   }
 
@@ -67,26 +87,33 @@ class _HttpServerScreenState extends State<HttpServerScreen> {
     super.dispose();
   }
 
+  // 🚀 UPDATED: Smarter IP Monitor for HTTP Server
   void _startLocalIpMonitor() {
     _ipMonitorTimer = Timer.periodic(const Duration(seconds: 5), (timer) async {
-      String currentIp = await FtpService.getLocalIpAddress(); // Reusing your existing network checker
+      // Reusing the robust IP fetcher from FtpService
+      List<String> currentIps = await FtpService.getAllLocalIpAddresses();
       String expectedIp = _ipController.text.trim();
 
       if (mounted) {
         setState(() {
-          _actualPhysicalIp = currentIp;
-          _isIpMismatch = expectedIp.isNotEmpty && currentIp != expectedIp;
+          _detectedIps = currentIps;
+          _actualPhysicalIp = currentIps.isNotEmpty ? currentIps.first : "127.0.0.1";
+
+          // Mismatch occurs only if the expected IP is missing from the full list
+          _isIpMismatch = expectedIp.isNotEmpty && !currentIps.contains(expectedIp);
         });
 
         if (_isIpMismatch && !_isAlertShowing && _isRunning) {
-          _showIpAlertDialog(expectedIp, currentIp);
+          _showIpAlertDialog(expectedIp, currentIps);
         }
       }
     });
   }
 
-  void _showIpAlertDialog(String expected, String actual) {
+  void _showIpAlertDialog(String expected, List<String> actualIps) {
     _isAlertShowing = true;
+    String displayIps = actualIps.join("\n");
+
     showDialog(
         context: context,
         barrierDismissible: false,
@@ -104,7 +131,7 @@ class _HttpServerScreenState extends State<HttpServerScreen> {
             content: Text(
               "The computer's physical IP address has changed!\n\n"
                   "Expected IP (Saved): $expected\n"
-                  "Current Network IP: ${actual == '127.0.0.1' ? 'DISCONNECTED' : actual}\n\n"
+                  "Available Network IPs:\n$displayIps\n\n"
                   "Cameras will not be able to connect until this is fixed.",
               style: const TextStyle(color: Colors.white70, fontSize: 16, height: 1.5),
             ),
@@ -120,16 +147,18 @@ class _HttpServerScreenState extends State<HttpServerScreen> {
                 style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent, foregroundColor: Colors.white),
                 onPressed: () async {
                   setState(() {
-                    _ipController.text = actual;
+                    _ipController.text = actualIps.first;
                     _isIpMismatch = false;
                   });
                   final prefs = await SharedPreferences.getInstance();
-                  await prefs.setString('http_ip', actual); // Save to HTTP specific key
+                  await prefs.setString('http_ip', actualIps.first); // Save to HTTP specific key
+
                   _isAlertShowing = false;
                   if (context.mounted) Navigator.of(c).pop();
-                  HttpServerService.log("⚠️ IP Address updated by user to: $actual");
+
+                  HttpServerService.log("⚠️ IP Address updated by user to: ${actualIps.first}");
                 },
-                child: const Text("UPDATE SETTINGS", style: TextStyle(fontWeight: FontWeight.bold)),
+                child: const Text("UPDATE TO FIRST AVAILABLE", style: TextStyle(fontWeight: FontWeight.bold)),
               ),
             ],
           );
@@ -172,7 +201,7 @@ class _HttpServerScreenState extends State<HttpServerScreen> {
 
     if (_isRunning) {
       await HttpServerService.stopServer();
-      await prefs.setBool('http_auto_start', false); // 🚀 Tell app NOT to auto-start next time
+      await prefs.setBool('http_auto_start', false);
       setState(() => _isRunning = false);
     } else {
       if (_selectedDirectory == "No folder selected") {
@@ -185,16 +214,22 @@ class _HttpServerScreenState extends State<HttpServerScreen> {
       // Save HTTP specific settings
       await prefs.setString('http_ip', _ipController.text.trim());
       await prefs.setInt('http_port', port);
-      await prefs.setString('server_protocol', 'http'); // Tell the system HTTP was the last used protocol
+      await prefs.setString('server_protocol', 'http');
 
       await HttpServerService.startServer(
         rootDirectory: _selectedDirectory,
         port: port,
       );
 
-      await prefs.setBool('http_auto_start', true); // 🚀 Tell app to auto-start next time
+      await prefs.setBool('http_auto_start', true);
       setState(() => _isRunning = true);
     }
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes == 0) return "0 MB";
+    double mb = bytes / (1024 * 1024);
+    return "${mb.toStringAsFixed(2)} MB";
   }
 
   @override
@@ -219,12 +254,90 @@ class _HttpServerScreenState extends State<HttpServerScreen> {
           Positioned(top: -100, right: -100, child: _buildGlowOrb(Colors.purpleAccent.withOpacity(0.1), 300)),
           Padding(
             padding: const EdgeInsets.all(32.0),
-            child: Row(
+            child: Column(
+              children: [
+                _buildMetricsDashboard(), // 🚀 NEW: Added the Metrics Row here
+                const SizedBox(height: 32),
+                Expanded(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(flex: 1, child: _buildSettingsPanel()),
+                      const SizedBox(width: 32),
+                      Expanded(flex: 2, child: _buildLogConsole()),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMetricsDashboard() {
+    return Row(
+      children: [
+        Expanded(
+          child: _buildMetricCard(
+            title: "FILES RECEIVED TODAY",
+            value: _filesToday.toString(),
+            icon: Icons.description,
+            color: Colors.cyanAccent,
+          ),
+        ),
+        const SizedBox(width: 16),
+        Expanded(
+          child: _buildMetricCard(
+            title: "DATA TRANSFERRED",
+            value: _formatBytes(_bytesToday),
+            icon: Icons.data_usage,
+            color: Colors.purpleAccent,
+          ),
+        ),
+        const SizedBox(width: 16),
+        Expanded(
+          child: _buildMetricCard(
+            title: "ACTIVE CAMERAS",
+            value: _activeCameras.toString(),
+            icon: Icons.linked_camera,
+            color: Colors.greenAccent,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMetricCard({required String title, required String value, required IconData icon, required Color color}) {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E293B),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withOpacity(0.05)),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 15, offset: const Offset(0, 5))
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.15),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, color: color, size: 28),
+          ),
+          const SizedBox(width: 20),
+          Expanded(
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(flex: 1, child: _buildSettingsPanel()),
-                const SizedBox(width: 32),
-                Expanded(flex: 2, child: _buildLogConsole()),
+                Text(title, style: const TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1.0)),
+                const SizedBox(height: 8),
+                Text(value, style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w900)),
               ],
             ),
           ),
@@ -234,100 +347,126 @@ class _HttpServerScreenState extends State<HttpServerScreen> {
   }
 
   Widget _buildSettingsPanel() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text('CONNECTION SETTINGS', style: TextStyle(color: Colors.purpleAccent, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 16),
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('CONNECTION SETTINGS', style: TextStyle(color: Colors.purpleAccent, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 16),
 
-        if (_isIpMismatch)
-          Container(
-            padding: const EdgeInsets.all(12),
-            margin: const EdgeInsets.only(bottom: 16),
-            decoration: BoxDecoration(color: Colors.redAccent.withOpacity(0.2), borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.redAccent)),
-            child: Row(
-              children: [
-                const Icon(Icons.error_outline, color: Colors.redAccent),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    "Network changed! Actual IP is currently ${_actualPhysicalIp == '127.0.0.1' ? 'DISCONNECTED' : _actualPhysicalIp}",
-                    style: const TextStyle(color: Colors.redAccent, fontSize: 12, fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(child: _buildTextField("Expected PC IP Address", _ipController)),
-            const SizedBox(width: 12),
+          if (_isIpMismatch)
             Container(
-              height: 56,
+              padding: const EdgeInsets.all(12),
               margin: const EdgeInsets.only(bottom: 16),
-              child: ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.purpleAccent.withOpacity(0.1),
-                  foregroundColor: Colors.purpleAccent,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      side: const BorderSide(color: Colors.purpleAccent, width: 1)
+              decoration: BoxDecoration(color: Colors.redAccent.withOpacity(0.2), borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.redAccent)),
+              child: Row(
+                children: [
+                  const Icon(Icons.error_outline, color: Colors.redAccent),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      "Network changed! Saved IP is not found on this machine.",
+                      style: TextStyle(color: Colors.redAccent, fontSize: 12, fontWeight: FontWeight.bold),
+                    ),
                   ),
-                ),
-                icon: const Icon(Icons.wifi_find),
-                label: const Text("AUTO-DETECT", style: TextStyle(fontWeight: FontWeight.bold)),
-                onPressed: () async {
-                  String currentIp = await FtpService.getLocalIpAddress();
-                  setState(() {
-                    _ipController.text = currentIp;
-                  });
-                  HttpServerService.log("🔍 Auto-detected IP: $currentIp. (Click START SERVER to save)");
-                },
+                ],
               ),
             ),
-          ],
-        ),
 
-        _buildTextField("Port", _portController),
+          // 🚀 UPDATED: Dropdown + TextField Combo for HTTP
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: _buildTextField("Expected PC IP Address", _ipController)),
+              const SizedBox(width: 12),
+              Container(
+                height: 56,
+                margin: const EdgeInsets.only(bottom: 16),
+                child: PopupMenuButton<String>(
+                  tooltip: "Select from detected IPs",
+                  color: const Color(0xFF1E293B),
+                  offset: const Offset(0, 60),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    decoration: BoxDecoration(
+                      color: Colors.purpleAccent.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.purpleAccent, width: 1),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(Icons.wifi_find, color: Colors.purpleAccent),
+                        SizedBox(width: 8),
+                        Text("DETECT IPs", style: TextStyle(color: Colors.purpleAccent, fontWeight: FontWeight.bold)),
+                        Icon(Icons.arrow_drop_down, color: Colors.purpleAccent),
+                      ],
+                    ),
+                  ),
+                  itemBuilder: (context) {
+                    return _detectedIps.map((ip) => PopupMenuItem<String>(
+                      value: ip,
+                      child: Row(
+                        children: [
+                          const Icon(Icons.network_check, color: Colors.purpleAccent, size: 20),
+                          const SizedBox(width: 12),
+                          Text(ip, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                    )).toList();
+                  },
+                  onSelected: (String selectedIp) {
+                    setState(() {
+                      _ipController.text = selectedIp;
+                      _isIpMismatch = false; // Reset mismatch alert immediately
+                    });
+                    HttpServerService.log("🔍 IP selected from dropdown: $selectedIp");
+                  },
+                ),
+              ),
+            ],
+          ),
 
-        // Note: HTTP doesn't use the standard FTP username/password fields, so we removed them!
+          _buildTextField("Port", _portController),
 
-        const SizedBox(height: 16),
-        const Text('TARGET DIRECTORY', style: TextStyle(color: Colors.purpleAccent, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 8),
-        InkWell(
-          onTap: _pickDirectory,
-          child: Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.white24)),
-            child: Row(
-              children: [
-                const Icon(Icons.folder, color: Colors.amberAccent),
-                const SizedBox(width: 12),
-                Expanded(child: Text(_selectedDirectory, style: const TextStyle(color: Colors.white70), overflow: TextOverflow.ellipsis)),
-              ],
+          // Note: HTTP doesn't use the standard FTP username/password fields, so they are omitted!
+
+          const SizedBox(height: 16),
+          const Text('TARGET DIRECTORY', style: TextStyle(color: Colors.purpleAccent, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          InkWell(
+            onTap: _pickDirectory,
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.white24)),
+              child: Row(
+                children: [
+                  const Icon(Icons.folder, color: Colors.amberAccent),
+                  const SizedBox(width: 12),
+                  Expanded(child: Text(_selectedDirectory, style: const TextStyle(color: Colors.white70), overflow: TextOverflow.ellipsis)),
+                ],
+              ),
             ),
           ),
-        ),
-        const SizedBox(height: 32),
+          const SizedBox(height: 32),
 
-        // --- START/STOP SERVER BUTTON ---
-        SizedBox(
-          width: double.infinity,
-          height: 60,
-          child: ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: _isRunning ? Colors.redAccent : Colors.greenAccent,
-              foregroundColor: Colors.black,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          // --- START/STOP SERVER BUTTON ---
+          SizedBox(
+            width: double.infinity,
+            height: 60,
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _isRunning ? Colors.redAccent : Colors.greenAccent,
+                foregroundColor: Colors.black,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              icon: Icon(_isRunning ? Icons.stop : Icons.play_arrow, size: 28),
+              label: Text(_isRunning ? 'STOP HTTP SERVER' : 'START HTTP SERVER', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, letterSpacing: 1)),
+              onPressed: _toggleServer,
             ),
-            icon: Icon(_isRunning ? Icons.stop : Icons.play_arrow, size: 28),
-            label: Text(_isRunning ? 'STOP HTTP SERVER' : 'START HTTP SERVER', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, letterSpacing: 1)),
-            onPressed: _toggleServer,
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -337,6 +476,12 @@ class _HttpServerScreenState extends State<HttpServerScreen> {
       child: TextField(
         controller: controller,
         readOnly: readOnly,
+        // 🚀 Trigger a check anytime the user manually changes the IP
+        onChanged: (val) {
+          setState(() {
+            _isIpMismatch = val.isNotEmpty && !_detectedIps.contains(val);
+          });
+        },
         style: TextStyle(color: readOnly ? Colors.white54 : Colors.white),
         decoration: InputDecoration(
           labelText: label,
@@ -381,7 +526,7 @@ class _HttpServerScreenState extends State<HttpServerScreen> {
                 Color textColor = Colors.greenAccent;
                 if (logMsg.contains("❌")) textColor = Colors.redAccent;
                 if (logMsg.contains("⚠️")) textColor = Colors.orangeAccent;
-                if (logMsg.contains("📥") || logMsg.contains("ℹ️") || logMsg.contains("🔍")) textColor = Colors.purpleAccent;
+                if (logMsg.contains("📥") || logMsg.contains("ℹ️") || logMsg.contains("🔍") || logMsg.contains("✅")) textColor = Colors.purpleAccent;
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 4),
                   child: Text(logMsg, style: TextStyle(color: textColor, fontFamily: 'Courier', fontSize: 13)),

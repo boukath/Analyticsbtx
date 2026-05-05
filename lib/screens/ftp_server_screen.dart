@@ -25,7 +25,14 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
   bool _isRunning = false;
   List<String> _consoleLogs = [];
 
+  List<String> _detectedIps = [];
+
   final ScrollController _scrollController = ScrollController();
+
+  // --- Live Metrics State ---
+  int _filesToday = 0;
+  int _bytesToday = 0;
+  int _activeCameras = 0;
 
   // --- IP Security Monitor Variables ---
   Timer? _ipMonitorTimer;
@@ -39,6 +46,7 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
     _initSettings();
     _isRunning = FtpService.isRunning;
 
+    // Listen to Terminal Logs
     FtpService.logStream.listen((logMessage) {
       if (mounted) {
         setState(() {
@@ -53,6 +61,17 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
               curve: Curves.easeOut,
             );
           }
+        });
+      }
+    });
+
+    // Listen to Live Server Metrics
+    FtpService.metricsStream.listen((metrics) {
+      if (mounted) {
+        setState(() {
+          _filesToday = metrics['files'];
+          _bytesToday = metrics['bytes'];
+          _activeCameras = metrics['activeCameras'];
         });
       }
     });
@@ -73,24 +92,27 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
 
   void _startLocalIpMonitor() {
     _ipMonitorTimer = Timer.periodic(const Duration(seconds: 5), (timer) async {
-      String currentIp = await FtpService.getLocalIpAddress();
+      List<String> currentIps = await FtpService.getAllLocalIpAddresses();
       String expectedIp = _ipController.text.trim();
 
       if (mounted) {
         setState(() {
-          _actualPhysicalIp = currentIp;
-          _isIpMismatch = expectedIp.isNotEmpty && currentIp != expectedIp;
+          _detectedIps = currentIps;
+          _actualPhysicalIp = currentIps.isNotEmpty ? currentIps.first : "127.0.0.1";
+          _isIpMismatch = expectedIp.isNotEmpty && !currentIps.contains(expectedIp);
         });
 
         if (_isIpMismatch && !_isAlertShowing && _isRunning) {
-          _showIpAlertDialog(expectedIp, currentIp);
+          _showIpAlertDialog(expectedIp, currentIps);
         }
       }
     });
   }
 
-  void _showIpAlertDialog(String expected, String actual) {
+  void _showIpAlertDialog(String expected, List<String> actualIps) {
     _isAlertShowing = true;
+    String displayIps = actualIps.join("\n");
+
     showDialog(
         context: context,
         barrierDismissible: false,
@@ -108,7 +130,7 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
             content: Text(
               "The computer's physical IP address has changed!\n\n"
                   "Expected IP (Saved): $expected\n"
-                  "Current Network IP: ${actual == '127.0.0.1' ? 'DISCONNECTED' : actual}\n\n"
+                  "Available Network IPs:\n$displayIps\n\n"
                   "Cameras will not be able to connect until this is fixed.",
               style: const TextStyle(color: Colors.white70, fontSize: 16, height: 1.5),
             ),
@@ -124,18 +146,18 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
                 style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent, foregroundColor: Colors.white),
                 onPressed: () async {
                   setState(() {
-                    _ipController.text = actual;
+                    _ipController.text = actualIps.first;
                     _isIpMismatch = false;
                   });
                   final prefs = await SharedPreferences.getInstance();
-                  await prefs.setString('ftp_ip', actual);
+                  await prefs.setString('ftp_ip', actualIps.first);
 
                   _isAlertShowing = false;
                   if (context.mounted) Navigator.of(c).pop();
 
-                  FtpService.log("⚠️ IP Address updated by user to: $actual");
+                  FtpService.log("⚠️ IP Address updated by user to: ${actualIps.first}");
                 },
-                child: const Text("UPDATE SETTINGS", style: TextStyle(fontWeight: FontWeight.bold)),
+                child: const Text("UPDATE TO FIRST AVAILABLE", style: TextStyle(fontWeight: FontWeight.bold)),
               ),
             ],
           );
@@ -176,13 +198,12 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
     }
   }
 
-  // 🚀 UPDATED: Now saves the ftp_auto_start preference for main.dart
   void _toggleServer() async {
     final prefs = await SharedPreferences.getInstance();
 
     if (_isRunning) {
       await FtpService.stopServer();
-      await prefs.setBool('ftp_auto_start', false); // 🚀 Tell app NOT to auto-start next time
+      await prefs.setBool('ftp_auto_start', false);
       setState(() => _isRunning = false);
     } else {
       if (_selectedDirectory == "No folder selected") {
@@ -204,9 +225,15 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
         password: _passController.text.trim(),
       );
 
-      await prefs.setBool('ftp_auto_start', true); // 🚀 Tell app to auto-start next time
+      await prefs.setBool('ftp_auto_start', true);
       setState(() => _isRunning = true);
     }
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes == 0) return "0 MB";
+    double mb = bytes / (1024 * 1024);
+    return "${mb.toStringAsFixed(2)} MB";
   }
 
   @override
@@ -254,12 +281,90 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
           Positioned(top: -100, right: -100, child: _buildGlowOrb(Colors.cyanAccent.withOpacity(0.1), 300)),
           Padding(
             padding: const EdgeInsets.all(32.0),
-            child: Row(
+            child: Column(
+              children: [
+                _buildMetricsDashboard(),
+                const SizedBox(height: 32),
+                Expanded(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(flex: 1, child: _buildSettingsPanel()),
+                      const SizedBox(width: 32),
+                      Expanded(flex: 2, child: _buildLogConsole()),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMetricsDashboard() {
+    return Row(
+      children: [
+        Expanded(
+          child: _buildMetricCard(
+            title: "FILES RECEIVED TODAY",
+            value: _filesToday.toString(),
+            icon: Icons.description,
+            color: Colors.cyanAccent,
+          ),
+        ),
+        const SizedBox(width: 16),
+        Expanded(
+          child: _buildMetricCard(
+            title: "DATA TRANSFERRED",
+            value: _formatBytes(_bytesToday),
+            icon: Icons.data_usage,
+            color: Colors.purpleAccent,
+          ),
+        ),
+        const SizedBox(width: 16),
+        Expanded(
+          child: _buildMetricCard(
+            title: "ACTIVE CAMERAS",
+            value: _activeCameras.toString(),
+            icon: Icons.linked_camera,
+            color: Colors.greenAccent,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMetricCard({required String title, required String value, required IconData icon, required Color color}) {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E293B),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withOpacity(0.05)),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 15, offset: const Offset(0, 5))
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.15),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, color: color, size: 28),
+          ),
+          const SizedBox(width: 20),
+          Expanded(
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(flex: 1, child: _buildSettingsPanel()),
-                const SizedBox(width: 32),
-                Expanded(flex: 2, child: _buildLogConsole()),
+                Text(title, style: const TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1.0)),
+                const SizedBox(height: 8),
+                Text(value, style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w900)),
               ],
             ),
           ),
@@ -269,133 +374,155 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
   }
 
   Widget _buildSettingsPanel() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text('CONNECTION SETTINGS', style: TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 16),
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('CONNECTION SETTINGS', style: TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 16),
 
-        if (_isIpMismatch)
-          Container(
-            padding: const EdgeInsets.all(12),
-            margin: const EdgeInsets.only(bottom: 16),
-            decoration: BoxDecoration(color: Colors.redAccent.withOpacity(0.2), borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.redAccent)),
-            child: Row(
-              children: [
-                const Icon(Icons.error_outline, color: Colors.redAccent),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    "Network changed! Actual IP is currently ${_actualPhysicalIp == '127.0.0.1' ? 'DISCONNECTED' : _actualPhysicalIp}",
-                    style: const TextStyle(color: Colors.redAccent, fontSize: 12, fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(child: _buildTextField("Expected PC IP Address", _ipController)),
-            const SizedBox(width: 12),
+          if (_isIpMismatch)
             Container(
-              height: 56,
+              padding: const EdgeInsets.all(12),
               margin: const EdgeInsets.only(bottom: 16),
-              child: ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.cyanAccent.withOpacity(0.1),
-                  foregroundColor: Colors.cyanAccent,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      side: const BorderSide(color: Colors.cyanAccent, width: 1)
+              decoration: BoxDecoration(color: Colors.redAccent.withOpacity(0.2), borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.redAccent)),
+              child: Row(
+                children: [
+                  const Icon(Icons.error_outline, color: Colors.redAccent),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      "Network changed! Saved IP is not found on this machine.",
+                      style: const TextStyle(color: Colors.redAccent, fontSize: 12, fontWeight: FontWeight.bold),
+                    ),
                   ),
-                ),
-                icon: const Icon(Icons.wifi_find),
-                label: const Text("AUTO-DETECT", style: TextStyle(fontWeight: FontWeight.bold)),
-                onPressed: () async {
-                  String currentIp = await FtpService.getLocalIpAddress();
-                  setState(() {
-                    _ipController.text = currentIp;
-                  });
-                  FtpService.log("🔍 Auto-detected IP: $currentIp. (Click START SERVER to save)");
-                },
+                ],
               ),
             ),
-          ],
-        ),
 
-        _buildTextField("Port", _portController),
-        _buildTextField("FTP Username", _userController),
-        _buildTextField("FTP Password", _passController),
-        const SizedBox(height: 16),
-        const Text('TARGET DIRECTORY', style: TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
-        const SizedBox(height: 8),
-        InkWell(
-          onTap: _pickDirectory,
-          child: Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.white24)),
-            child: Row(
-              children: [
-                const Icon(Icons.folder, color: Colors.amberAccent),
-                const SizedBox(width: 12),
-                Expanded(child: Text(_selectedDirectory, style: const TextStyle(color: Colors.white70), overflow: TextOverflow.ellipsis)),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 32),
-
-        // --- START/STOP SERVER BUTTON ---
-        SizedBox(
-          width: double.infinity,
-          height: 60,
-          child: ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: _isRunning ? Colors.redAccent : Colors.greenAccent,
-              foregroundColor: Colors.black,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-            icon: Icon(_isRunning ? Icons.stop : Icons.play_arrow, size: 28),
-            label: Text(_isRunning ? 'STOP SERVER' : 'START SERVER', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, letterSpacing: 1)),
-            onPressed: _toggleServer,
-          ),
-        ),
-
-        const SizedBox(height: 16), // Spacing
-
-        // --- FIX FIREWALL ISSUES BUTTON ---
-        SizedBox(
-          width: double.infinity,
-          height: 50,
-          child: OutlinedButton.icon(
-            style: OutlinedButton.styleFrom(
-              backgroundColor: Colors.orangeAccent.withOpacity(0.1),
-              foregroundColor: Colors.orangeAccent,
-              side: const BorderSide(color: Colors.orangeAccent, width: 1.5),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-            onPressed: () async {
-              await FtpService.requestFirewallException();
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Requested Firewall Exception. Please click "Yes" on the Windows prompt.'),
-                    backgroundColor: Colors.orange,
-                    behavior: SnackBarBehavior.floating,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: _buildTextField("Expected PC IP Address", _ipController)),
+              const SizedBox(width: 12),
+              Container(
+                height: 56,
+                margin: const EdgeInsets.only(bottom: 16),
+                child: PopupMenuButton<String>(
+                  tooltip: "Select from detected IPs",
+                  color: const Color(0xFF1E293B),
+                  offset: const Offset(0, 60),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    decoration: BoxDecoration(
+                      color: Colors.cyanAccent.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.cyanAccent, width: 1),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(Icons.wifi_find, color: Colors.cyanAccent),
+                        SizedBox(width: 8),
+                        Text("DETECT IPs", style: TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
+                        Icon(Icons.arrow_drop_down, color: Colors.cyanAccent),
+                      ],
+                    ),
                   ),
-                );
-              }
-            },
-            icon: const Icon(Icons.security),
-            label: const Text(
-              'FIX FIREWALL ISSUES',
-              style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1),
+                  itemBuilder: (context) {
+                    return _detectedIps.map((ip) => PopupMenuItem<String>(
+                      value: ip,
+                      child: Row(
+                        children: [
+                          const Icon(Icons.network_check, color: Colors.cyanAccent, size: 20),
+                          const SizedBox(width: 12),
+                          Text(ip, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                    )).toList();
+                  },
+                  onSelected: (String selectedIp) {
+                    setState(() {
+                      _ipController.text = selectedIp;
+                      _isIpMismatch = false;
+                    });
+                    FtpService.log("🔍 IP selected from dropdown: $selectedIp");
+                  },
+                ),
+              ),
+            ],
+          ),
+
+          _buildTextField("Port", _portController),
+          _buildTextField("FTP Username", _userController),
+          _buildTextField("FTP Password", _passController),
+          const SizedBox(height: 16),
+          const Text('TARGET DIRECTORY', style: TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          InkWell(
+            onTap: _pickDirectory,
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(color: Colors.white.withOpacity(0.05), borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.white24)),
+              child: Row(
+                children: [
+                  const Icon(Icons.folder, color: Colors.amberAccent),
+                  const SizedBox(width: 12),
+                  Expanded(child: Text(_selectedDirectory, style: const TextStyle(color: Colors.white70), overflow: TextOverflow.ellipsis)),
+                ],
+              ),
             ),
           ),
-        ),
-      ],
+          const SizedBox(height: 32),
+
+          SizedBox(
+            width: double.infinity,
+            height: 60,
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _isRunning ? Colors.redAccent : Colors.greenAccent,
+                foregroundColor: Colors.black,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              icon: Icon(_isRunning ? Icons.stop : Icons.play_arrow, size: 28),
+              label: Text(_isRunning ? 'STOP SERVER' : 'START SERVER', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, letterSpacing: 1)),
+              onPressed: _toggleServer,
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                backgroundColor: Colors.orangeAccent.withOpacity(0.1),
+                foregroundColor: Colors.orangeAccent,
+                side: const BorderSide(color: Colors.orangeAccent, width: 1.5),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              onPressed: () async {
+                await FtpService.requestFirewallException();
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Requested Firewall Exception. Please click "Yes" on the Windows prompt.'),
+                      backgroundColor: Colors.orange,
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                }
+              },
+              icon: const Icon(Icons.security),
+              label: const Text(
+                'FIX FIREWALL ISSUES',
+                style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -405,6 +532,11 @@ class _FtpServerScreenState extends State<FtpServerScreen> {
       child: TextField(
         controller: controller,
         readOnly: readOnly,
+        onChanged: (val) {
+          setState(() {
+            _isIpMismatch = val.isNotEmpty && !_detectedIps.contains(val);
+          });
+        },
         style: TextStyle(color: readOnly ? Colors.white54 : Colors.white),
         decoration: InputDecoration(
           labelText: label,
