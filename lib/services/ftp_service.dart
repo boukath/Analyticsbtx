@@ -242,8 +242,10 @@ class FtpService {
         if (event is! FileSystemCreateEvent && event is! FileSystemModifyEvent) return;
 
         String fileName = event.path.split(Platform.pathSeparator).last;
+        String fileNameLower = fileName.toLowerCase();
 
-        if (!fileName.startsWith('.') && fileName.endsWith('.scb')) {
+        // 🚀 UPDATE: Now accepts both .scb and .dat files!
+        if (!fileName.startsWith('.') && (fileNameLower.endsWith('.scb') || fileNameLower.endsWith('.dat'))) {
           log("📁 Camera uploading: $fileName");
 
           File uploadedFile = File(event.path);
@@ -251,7 +253,7 @@ class FtpService {
 
           if (isComplete) {
             log("✅ Camera file received successfully: $fileName");
-            // 🚀 Record the metric immediately after a successful receipt
+            // Record the metric immediately after a successful receipt
             await _recordFileMetric(uploadedFile);
           } else {
             log("❌ File upload timed out or failed: $fileName");

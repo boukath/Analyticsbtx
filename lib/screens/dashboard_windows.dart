@@ -608,6 +608,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
       _isLoading = true;
     });
 
+    _scannerService.clearCache(); // 🚀 NEW: Clears cache on manual refresh!
     List<PeopleCount> latestData = await _scannerService.loadScbDataFromFolder(_selectedFolderPath!);
 
     setState(() {
@@ -663,7 +664,10 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
 
   Future<void> _processDataFromPath(String folderPath) async {
     setState(() { _isLoading = true; _selectedFolderPath = folderPath; _selectedDateRange = null; });
+
+    _scannerService.clearCache(); // 🚀 NEW: Clears cache when a new folder is picked!
     List<PeopleCount> loadedData = await _scannerService.loadScbDataFromFolder(folderPath);
+
     setState(() {
       _rawData = loadedData;
       if (_rawData.isNotEmpty) {
@@ -690,7 +694,10 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
 
   void _startAutoRefresh() {
     _autoRefreshTimer?.cancel();
-    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 60), (timer) => _refreshDataSilently());
+    // OPTIMIZATION: Increased from 60 seconds to 5 minutes.
+    // Scanning thousands of files every minute causes memory crashes.
+    // For instant updates, the user can click the manual refresh button!
+    _autoRefreshTimer = Timer.periodic(const Duration(minutes: 5), (timer) => _refreshDataSilently());
   }
 
   Future<void> _refreshDataSilently() async {
@@ -712,18 +719,35 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
   void _applyFilter() {
     setState(() {
       List<PeopleCount> filteredData = _rawData.where((item) {
+        // 1. FAST CAMERA CHECK
         if (_selectedCamera != 'All Doors' && item.doorName != _selectedCamera) return false;
+
+        // 2. FAST DATE CHECK (Do this BEFORE the time check to save CPU!)
+        if (_selectedDateRange != null) {
+          var dateParts = item.date.split('/');
+          if (dateParts.length == 3) {
+            int day = int.parse(dateParts[0]);
+            int month = int.parse(dateParts[1]);
+            int year = int.parse(dateParts[2]);
+            DateTime rowDate = DateTime(year, month, day);
+
+            // If the date is outside our range, immediately discard it!
+            if (rowDate.isBefore(_selectedDateRange!.start.subtract(const Duration(days: 1))) ||
+                rowDate.isAfter(_selectedDateRange!.end.add(const Duration(days: 1)))) {
+              return false;
+            }
+          }
+        }
+
+        // 3. TIME CHECK (Only runs if the date is a match, saving massive CPU power)
         var timeParts = item.time.split(':');
         int hour = timeParts.isNotEmpty ? (int.tryParse(timeParts[0]) ?? 0) : 0;
         int minute = timeParts.length > 1 ? (int.tryParse(timeParts[1]) ?? 0) : 0;
         int totalMinutes = (hour * 60) + minute;
+
         if (totalMinutes < _workingMinuteStart || totalMinutes > _workingMinuteEnd) return false;
-        if (_selectedDateRange == null) return true;
-        var dateParts = item.date.split('/');
-        if (dateParts.length != 3) return true;
-        int day = int.parse(dateParts[0]), month = int.parse(dateParts[1]), year = int.parse(dateParts[2]);
-        DateTime rowDate = DateTime(year, month, day);
-        return rowDate.isAfter(_selectedDateRange!.start.subtract(const Duration(days: 1))) && rowDate.isBefore(_selectedDateRange!.end.add(const Duration(days: 1)));
+
+        return true; // Keep the item!
       }).toList();
 
       if (_currentFilter == ChartFilter.daily) _displayedData = DataAggregator.aggregateByDay(filteredData);
@@ -744,7 +768,6 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
 
       _totalIn = 0; _totalOut = 0; int maxTraffic = 0; _peakHour = "--:--";
 
-      // Variables for Little's Law
       int runningOccupancy = 0;
       double sumOccupancy = 0;
       int activePeriods = 0;
@@ -753,33 +776,27 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
         _totalIn += item.inCount;
         _totalOut += item.outCount;
 
-        // Track peak hour
         int totalVisitorsForHour = (item.inCount + item.outCount) ~/ 2;
         if (totalVisitorsForHour > maxTraffic) {
           maxTraffic = totalVisitorsForHour;
           _peakHour = item.time;
         }
 
-        // Keep a running tally of people inside for the Dwell Time math
         runningOccupancy += (item.inCount - item.outCount);
-        if (runningOccupancy < 0) runningOccupancy = 0; // Prevent negative occupancy errors
+        if (runningOccupancy < 0) runningOccupancy = 0;
         sumOccupancy += runningOccupancy;
         activePeriods++;
       }
 
-      // Current live occupancy
       _occupancy = _totalIn - _totalOut;
       if (_occupancy < 0) _occupancy = 0;
 
-      // 🚀 NEW: Calculate Estimated Dwell Time using Little's Law (W = L / λ)
       double avgOccupancy = activePeriods > 0 ? (sumOccupancy / activePeriods) : 0;
-
-      // Calculate total minutes in the viewed period
-      double totalMinutes = activePeriods > 0
+      double totalMinutesForDwell = activePeriods > 0
           ? (_currentFilter == ChartFilter.hourly ? activePeriods * 60.0 : activePeriods * 24 * 60.0)
           : 1.0;
 
-      double arrivalRatePerMinute = _totalIn / totalMinutes;
+      double arrivalRatePerMinute = _totalIn / totalMinutesForDwell;
 
       if (arrivalRatePerMinute > 0) {
         _estimatedDwellTimeMins = (avgOccupancy / arrivalRatePerMinute).round();
@@ -794,16 +811,24 @@ class _DashboardScreenState extends State<DashboardScreen> with WindowListener, 
 
         List<PeopleCount> compareFilteredData = _rawData.where((item) {
           if (_selectedCamera != 'All Doors' && item.doorName != _selectedCamera) return false;
+
+          var dateParts = item.date.split('/');
+          if (dateParts.length == 3) {
+            int day = int.parse(dateParts[0]), month = int.parse(dateParts[1]), year = int.parse(dateParts[2]);
+            DateTime rowDate = DateTime(year, month, day);
+            if (rowDate.isBefore(compareStart.subtract(const Duration(days: 1))) ||
+                rowDate.isAfter(compareEnd.add(const Duration(days: 1)))) {
+              return false;
+            }
+          }
+
           var timeParts = item.time.split(':');
           int hour = timeParts.isNotEmpty ? (int.tryParse(timeParts[0]) ?? 0) : 0;
           int minute = timeParts.length > 1 ? (int.tryParse(timeParts[1]) ?? 0) : 0;
           int totalMinutes = (hour * 60) + minute;
           if (totalMinutes < _workingMinuteStart || totalMinutes > _workingMinuteEnd) return false;
-          var dateParts = item.date.split('/');
-          if (dateParts.length != 3) return true;
-          int day = int.parse(dateParts[0]), month = int.parse(dateParts[1]), year = int.parse(dateParts[2]);
-          DateTime rowDate = DateTime(year, month, day);
-          return rowDate.isAfter(compareStart.subtract(const Duration(days: 1))) && rowDate.isBefore(compareEnd.add(const Duration(days: 1)));
+
+          return true;
         }).toList();
 
         if (_currentFilter == ChartFilter.daily) _compareDisplayedData = DataAggregator.aggregateByDay(compareFilteredData);
