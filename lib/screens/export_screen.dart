@@ -8,7 +8,7 @@ import '../models/people_count.dart';
 import '../core/data_aggregator.dart';
 import '../services/pdf_export_service.dart';
 import '../services/csv_export_service.dart';
-import 'dashboard_windows.dart'; // To access the ChartFilter enum
+import '../widgets/dashboard_chart.dart'; // To access the ChartFilter enum
 
 class ExportScreen extends StatefulWidget {
   final List<PeopleCount> rawData;

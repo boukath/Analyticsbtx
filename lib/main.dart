@@ -29,11 +29,14 @@ import 'services/http_server_service.dart';
 import 'screens/splash_screen.dart';
 import 'screens/login_screen.dart';
 
+// 🚀 NEW: Import our Theme Manager
+import 'core/app_theme.dart';
+
 // A global navigator key so background services can show emergency popups anywhere!
 final GlobalKey<NavigatorState> globalNavigatorKey = GlobalKey<NavigatorState>();
 
 // =======================================================================
-// 🚀 NEW: DIRECTORY INITIALIZATION LOGIC
+// 🚀 DIRECTORY INITIALIZATION LOGIC
 // Checks for C:\comptage, creates it if missing, and binds it to the app.
 // =======================================================================
 Future<void> _initializeComptageDirectory() async {
@@ -138,7 +141,7 @@ void main() async {
     });
 
     // =======================================================================
-    // 🚀 NEW: SERVER AUTO-START LOGIC
+    // 🚀 SERVER AUTO-START LOGIC
     // Checks if the servers were running before the app was last closed/rebooted
     // =======================================================================
     try {
@@ -188,7 +191,6 @@ void main() async {
   runApp(MyApp(initialScreen: firstScreen));
 }
 
-// Changed from StatelessWidget to StatefulWidget to handle Window & Tray events
 class MyApp extends StatefulWidget {
   final Widget initialScreen;
 
@@ -203,12 +205,21 @@ class _MyAppState extends State<MyApp> with WindowListener, TrayListener {
   @override
   void initState() {
     super.initState();
+    _loadSavedTheme(); // 🚀 Load the theme on startup!
+
     // Add listeners ONLY if we are running on desktop/mobile (Not Web)
     if (!kIsWeb) {
       windowManager.addListener(this);
       trayManager.addListener(this);
       _initSystemTray();
     }
+  }
+
+  // 🚀 Reads the user's last saved theme preference
+  Future<void> _loadSavedTheme() async {
+    final prefs = await SharedPreferences.getInstance();
+    final isDark = prefs.getBool('is_dark_mode') ?? true;
+    appThemeNotifier.value = isDark ? ThemeMode.dark : ThemeMode.light;
   }
 
   @override
@@ -234,7 +245,7 @@ class _MyAppState extends State<MyApp> with WindowListener, TrayListener {
         MenuItem.separator(),
         MenuItem(
           key: 'restart_app',
-          label: 'Restart App', // NEW: Added the restart option
+          label: 'Restart App',
         ),
         MenuItem(
           key: 'exit_app',
@@ -276,36 +287,46 @@ class _MyAppState extends State<MyApp> with WindowListener, TrayListener {
     } else if (menuItem.key == 'exit_app') {
       // If the user deliberately selects exit, we terminate the app completely.
       windowManager.destroy();
-      exit(0); // Added exit(0) to ensure background isolates die cleanly
+      exit(0);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      navigatorKey: globalNavigatorKey,
-      title: 'BoitexInfo Analytics',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-        brightness: Brightness.dark,
-        useMaterial3: true,
-      ),
+    // 🚀 We wrap the app in a ValueListenableBuilder so it rebuilds instantly when toggled
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: appThemeNotifier,
+      builder: (context, currentMode, child) {
+        return MaterialApp(
+          navigatorKey: globalNavigatorKey,
+          title: 'BoitexInfo Analytics',
+          debugShowCheckedModeBanner: false,
 
-      // --- Localization Settings ---
-      localizationsDelegates: const [
-        AppLocalizations.delegate,
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-      ],
-      supportedLocales: const [
-        Locale('en', ''), // English
-        Locale('fr', ''), // French
-      ],
-      // ---------------------------------
+          // 🚀 Native Flutter Theme definitions
+          themeMode: currentMode,
+          theme: ThemeData.light(useMaterial3: true).copyWith(
+            scaffoldBackgroundColor: const Color(0xFFF3F4F6),
+          ),
+          darkTheme: ThemeData.dark(useMaterial3: true).copyWith(
+            scaffoldBackgroundColor: const Color(0xFF05050A),
+          ),
 
-      home: widget.initialScreen,
+          // --- Localization Settings ---
+          localizationsDelegates: const [
+            AppLocalizations.delegate,
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          supportedLocales: const [
+            Locale('en', ''), // English
+            Locale('fr', ''), // French
+          ],
+          // ---------------------------------
+
+          home: widget.initialScreen,
+        );
+      },
     );
   }
 }
